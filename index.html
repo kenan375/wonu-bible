@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>원어서재</title>
+<meta name="theme-color" content="#7a2e2b">
+<meta name="description" content="개역개정과 히브리어·헬라어 원문을 나란히 읽고, 단어를 눌러 문법·사전·용례를 보는 개인용 원어 성경">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="bar">
+  <button class="iconbtn" id="prev" type="button" aria-label="이전 장">‹</button>
+  <button class="loc" id="loc" type="button" aria-haspopup="dialog">창세기 1</button>
+  <button class="iconbtn" id="next" type="button" aria-label="다음 장">›</button>
+  <span class="grow"></span>
+  <button class="iconbtn" id="btnSearch" type="button" aria-label="찾기">⌕</button>
+  <button class="iconbtn" id="btnNotes" type="button" aria-label="노트">✎</button>
+  <button class="iconbtn" id="btnSettings" type="button" aria-label="설정">⚙</button>
+</header>
+
+<div class="modes" role="group" aria-label="보기 방식">
+  <button type="button" data-view="both" aria-pressed="true">대조</button>
+  <button type="button" data-view="kor" aria-pressed="false">한글</button>
+  <button type="button" data-view="orig" aria-pressed="false">원어</button>
+  <label class="gloss-toggle"><input type="checkbox" id="glossToggle"> 단어 뜻</label>
+</div>
+
+<main id="reader" aria-live="polite"></main>
+
+<!-- 아래에서 올라오는 시트: 단어 / 노트 / 책 선택 / 찾기 / 컨코던스 / 설정 -->
+<div class="scrim" id="scrim" hidden></div>
+<section class="sheet" id="sheet" role="dialog" aria-modal="true" hidden>
+  <div class="sheet-head">
+    <h2 id="sheetTitle"></h2>
+    <button class="iconbtn" id="sheetClose" type="button" aria-label="닫기">✕</button>
+  </div>
+  <div class="sheet-body" id="sheetBody"></div>
+</section>
+
+<div class="toast" id="toast" role="status" hidden></div>
+
+<script src="vendor/sql-wasm.js" defer></script>
+<script src="app.js" defer></script>
+</body>
+</html>

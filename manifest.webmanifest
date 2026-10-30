@@ -1,0 +1,16 @@
+{
+  "name": "원어서재",
+  "short_name": "원어서재",
+  "description": "개역개정과 히브리어·헬라어 원문 대조, 단어 문법·사전·용례, 말씀서재 노트",
+  "lang": "ko",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f4f5f3",
+  "theme_color": "#7a2e2b",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "icons/icon-512-maskable.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
