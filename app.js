@@ -90,7 +90,7 @@ const state = {
   b: store.get("b", 1), c: store.get("c", 1),
   fs: store.get("fs", 20), gloss: store.get("gloss", false),
   allOrig: store.get("allOrig", false), allEn: store.get("allEn", false),
-  theme: store.get("theme", "dark"),
+  theme: store.get("theme", "dark"), pad: store.get("pad", "home"),
   hasKor: false, notes: new Map(), marks: new Set(),
   list: [],          // 지금 화면에 보이는 절 [b,c,v]
   mode: "chapter",   // chapter | range | refs
@@ -118,7 +118,8 @@ const hlRe = () => state.terms.length ? new RegExp(state.terms.map(t => t.replac
 
 async function drawList(scrollKey) {
   const reader = $("#reader");
-  reader.className = state.gloss ? "show-gloss" : "";
+  if (state.pad === "plan") return showPlan();
+  reader.className = (state.gloss ? "show-gloss " : "") + "pad-" + state.pad;
   state.words = [];
   const list = state.list;
   const multiBook = new Set(list.map(r => r[0])).size > 1;
@@ -148,12 +149,15 @@ async function drawList(scrollKey) {
       <div class="vside"><span class="vnum">${v}</span><button class="enbtn" type="button" data-tool="en" data-k="${key}" aria-pressed="false" aria-label="영어 성경">EN</button></div></div>
       <div class="vtools">
         <button class="vt ${ot ? "he" : "gr"}" type="button" data-tool="orig" data-k="${key}" aria-pressed="false" aria-label="원어">${ot ? "א" : "α"}</button>
+        ${ot ? `<button class="vt lx" type="button" data-tool="lxx" data-k="${key}" aria-pressed="false" aria-label="70인역">Λ</button>` : ""}
         <button class="vt xr" type="button" data-tool="xref" data-k="${key}" aria-pressed="false" aria-label="관주">🔗<small>${xn || ""}</small></button>
         <button class="vt nt${state.notes.has(key) ? " has" : ""}" type="button" data-tool="note" data-k="${key}" aria-label="노트">✎</button>
         <button class="vt nt${state.marks.has(key) ? " has" : ""}" type="button" data-tool="mark" data-k="${key}" aria-label="북마크">⚑</button>
         <button class="vt cp" type="button" data-tool="tts" data-k="${key}" aria-label="읽어주기">▶</button>
         <button class="vt cp" type="button" data-tool="copy" data-k="${key}" aria-label="복사">#</button>
       </div>
+      ${state.pad === "inter" ? `<div class="inter">${await interHTML(b, c, v)}</div>` : ""}
+      ${state.pad === "copy" ? copyHTML(key, text) : ""}
       <div class="panels"></div></article>`;
   }
   h += `</div>`;
@@ -186,7 +190,11 @@ async function showChapter(b, c, v) {
   await drawList(v ? refKey(state.b, state.c, v) : 0);
   if (!v) $("#reader").scrollIntoView({ block: "start" });
 }
-function go(b, c, v) { sheetStack = []; hideSheet(); showChapter(b, c, v); }
+function go(b, c, v) {
+  sheetStack = []; hideSheet();
+  if (state.pad === "plan") { state.pad = "home"; store.set("pad", "home"); $("#padName").textContent = PADS.home[1]; }
+  showChapter(b, c, v);
+}
 function step(d) {
   let { b, c } = state; c += d;
   if (c < 1) { if (b === 1) return; b--; c = BOOKS[b-1][2]; }
@@ -220,6 +228,15 @@ async function togglePanel(article, tool, key, forceOpen) {
         const cls = "w" + (w[6] === 2 ? " var" : "") + (w[6] === 1 ? " ttl" : "");
         h += `<button class="${cls}" type="button" data-w="${i}">${w[6] === 2 ? "[" + esc(w[0]) + "]" : esc(w[0])}<span class="g">${esc(w[2])}</span></button>`;
       }
+      div.innerHTML = h + `</div>`;
+    }
+  } else if (tool === "lxx") {
+    let lx = null;
+    try { const L = await loadLxx(b); lx = L[c] && L[c][v]; } catch {}
+    if (!lx || !lx.length) div.innerHTML = `<p class="small">이 절은 70인역과 연결되지 않았습니다 (장절 배열 차이 또는 자료 없음).</p>`;
+    else {
+      let h = `<h4>70인역 (Swete) · 단어를 누르세요</h4><div class="vo gr" lang="grc">`;
+      for (const x of lx) { const i = state.words.push({ lxx: x, b, c, v }) - 1; h += `<button class="w${x[1] ? "" : " var"}" type="button" data-w="${i}">${esc(x[0])}</button>`; }
       div.innerHTML = h + `</div>`;
     }
   } else if (tool === "xref") {
@@ -261,6 +278,7 @@ async function fillXref(listEl, refs, from) {
 
 // ---------- 단어 상세 ----------
 async function showWord(i) {
+  if (state.words[i].lxx) return showLxxWord(i);
   const { w, b, c, v } = state.words[i];
   document.querySelectorAll(".w.sel").forEach(e => e.classList.remove("sel"));
   document.querySelector(`.w[data-w="${i}"]`)?.classList.add("sel");
@@ -636,14 +654,14 @@ async function showSettings() {
     <div class="progress" hidden id="impProg"><span></span></div><p class="small" id="impMsg"></p>
     ${meta ? `<div><button class="btn plain" type="button" data-act="delkor">한글 본문 지우기</button></div>` : ""}</div>
   <div class="card"><h3>오프라인 저장</h3>
-    <p class="hint">지금은 읽은 책만 저장됩니다. 와이파이에서 한 번 눌러 두면 인터넷 없이 모든 기능을 쓸 수 있습니다 (약 25MB 전송).</p>
+    <p class="hint">지금은 읽은 책만 저장됩니다. 와이파이에서 한 번 눌러 두면 인터넷 없이 모든 기능을 쓸 수 있습니다 (약 30MB 전송).</p>
     <div><button class="btn ghost" type="button" data-act="offline">전체 원어 데이터 저장</button></div>
     <div class="progress" hidden id="offProg"><span></span></div><p class="small" id="offMsg"></p></div>
   <div class="card"><h3>글자 크기</h3><div class="row"><input type="range" id="fs" min="14" max="30" step="1" value="${state.fs}" style="flex:1"><span id="fsv">${state.fs}px</span></div></div>
   <div class="card"><h3>읽어주기 속도</h3><select id="ttsRate">${[0.8,1,1.2,1.5].map(r => `<option value="${r}"${store.get("ttsRate",1)===r?" selected":""}>${r}배</option>`).join("")}</select>
     <p class="hint">한국어 목소리가 어색하면 휴대폰 설정 → 일반 → 글자 읽어주기 → 기본 엔진을 삼성 TTS로 바꿔 보세요.</p></div>
   <div class="card"><h3>자료 출처</h3>
-    <p class="small">히브리어·헬라어 원문, 스트롱 번호, 문법 분해, 사전: <b>STEPBible.org</b> (Tyndale House, Cambridge) 데이터, CC BY 4.0. 관주: OpenBible.info, CC BY. 영어: KJV(퍼블릭 도메인). 헬라어 본문은 NA28 기준이며 공인본문(TR)에만 있는 단어는 [괄호]로 흐리게 표시합니다.</p>
+    <p class="small">히브리어·헬라어 원문, 스트롱 번호, 문법 분해, 사전: <b>STEPBible.org</b> (Tyndale House, Cambridge) 데이터, CC BY 4.0. 관주: OpenBible.info, CC BY. 70인역: Swete 판(First1KGreek / nathans/lxx-swete), CC BY-SA 4.0 — 스캔 본문이라 오탈자가 있을 수 있고, 문법 분해는 신약에 같은 형태가 있을 때만 추정으로 붙였습니다. 영어: KJV(퍼블릭 도메인). 헬라어 본문은 NA28 기준이며 공인본문(TR)에만 있는 단어는 [괄호]로 흐리게 표시합니다.</p>
     <p class="small">한글 본문은 사용자가 직접 불러온 개인 파일이며 앱에 포함되어 있지 않습니다.</p></div>`;
   openSheet("설정", h, { full: true });
 }
@@ -696,8 +714,8 @@ async function importBdb(file) {
 async function saveOffline() {
   const msg = $("#offMsg"), prog = $("#offProg"), bar = prog.querySelector("span");
   prog.hidden = false;
-  const files = ["data/morph.json", "data/lex/H.json", "data/lex/G.json", "data/conc/H.json", "data/conc/G.json"];
-  for (let b = 1; b <= 66; b++) for (const dir of ["books", "en", "xref"]) files.push(`data/${dir}/${String(b).padStart(2, "0")}.json`);
+  const files = ["data/vcount.json", "data/morph.json", "data/lex/H.json", "data/lex/G.json", "data/conc/H.json", "data/conc/G.json"];
+  for (let b = 1; b <= 66; b++) for (const dir of ["books", "en", "xref", ...(b <= 39 ? ["lxx"] : [])]) files.push(`data/${dir}/${String(b).padStart(2, "0")}.json`);
   let done = 0, fail = 0;
   for (const f of files) {
     try { const r = await fetch(f); if (!r.ok) fail++; await r.arrayBuffer(); } catch { fail++; }
@@ -707,6 +725,196 @@ async function saveOffline() {
 }
 
 
+// ---------- 패드(메뉴) ----------
+const PADS = {
+  home: ["본문", "Basic Pad"], inter: ["인터리니어 패드", "Interlinear Pad"], tts: ["TTS 패드", "TTS Pad"],
+  copy: ["필사 패드", "Copy Pad"], plan: ["연간 읽기표", "Reading Plan"]
+};
+const loadLxx = b => getJSON(`data/lxx/${String(b).padStart(2, "0")}.json`);
+
+function showMenu() {
+  const items = [["home", "⌂", "본문 (홈)"], ["inter", "≡", "인터리니어 패드"], ["tts", "♪", "TTS 패드"], ["copy", "✍", "필사 패드"],
+    ["plan", "▦", "연간 읽기표"], ["notes", "✎", "묵상 노트"], ["marks", "⚑", "저장 목록 (북마크)"]];
+  const h = `<nav class="menu">${items.map(([k, i, n]) => `<button type="button" class="${state.pad === k ? "cur" : ""}" data-pad="${k}"><span class="mi">${i}</span>${n}</button>`).join("")}
+    <hr><button type="button" data-act="settings"><span class="mi">⚙</span>설정</button></nav>
+    <p class="small">원어: STEPBible.org · 70인역: Swete (First1KGreek) · 관주: OpenBible.info · 영어: KJV</p>`;
+  openSheet("원어서재", h, { side: true });
+}
+function setPad(p) {
+  speechSynthesis?.cancel?.();
+  state.pad = p; store.set("pad", p);
+  $("#padName").textContent = PADS[p] ? PADS[p][1] : "";
+  $("#ttsBar").hidden = p !== "tts";
+  if (p === "plan") return showPlan();
+  drawList();
+}
+
+// ---------- 한국어 약식 분해 (예: 동사-칼-완-3남단, 명사.여단여) ----------
+const SHORT = [
+  [/^칼/, "칼"], [/^니팔/, "닢"], [/^피엘/, "피"], [/^푸알/, "푸"], [/^히필/, "힢"], [/^호팔/, "홒"], [/^히트파엘/, "힡"],
+  [/^와우 연속 미완료/, "와미"], [/^와우 연속 완료/, "와완"], [/^미완료/, "미완"], [/^완료/, "완"], [/^과거완료/, "과완"],
+  [/^제2 부정과거|^부정과거/, "부과"], [/^현재/, "현"], [/^미래|^제2 미래/, "미"], [/^제2 완료/, "완"],
+  [/^명령/, "명"], [/^부정사/, "부정사"], [/^수동 분사/, "수분"], [/^분사/, "분"], [/^직설법/, "직"], [/^가정법/, "가"], [/^희구법/, "희"],
+  [/^능동/, "능"], [/^중간 또는 수동/, "중수"], [/^중간/, "중"], [/^수동/, "수"],
+  [/^(\d)인칭/, "$1"], [/^남성/, "남"], [/^여성/, "여"], [/^중성/, "중"], [/^남·여/, "공"],
+  [/^단수/, "단"], [/^복수/, "복"], [/^쌍수/, "쌍"], [/^연계형/, "연"],
+  [/^주격/, "주"], [/^속격/, "속"], [/^여격/, "여"], [/^대격/, "대"], [/^호격/, "호"]
+];
+const POS_SHORT = { "접속사": "접속", "정관사": "관", "전치사": "전치사", "인칭 대명사": "인대", "접미 대명사": "접미", "목적격 표지(에트)": "목표", "부정 불변사": "부정", "관계 대명사": "관대", "지시 대명사": "지대" };
+function kparse(code, morph) {
+  if (!code) return "";
+  return code.split("/").map(c => {
+    const rows = morph[c]; if (!rows) return "";
+    let pos = "";
+    const bits = [];      // 어간·형태·시제 등은 따로, 인칭·성·수·격은 붙여 쓴다
+    let pgn = "";
+    for (const [k, v] of rows) {
+      if (k === "품사") { pos = POS_SHORT[v] || v; continue; }
+      if (k === "형태" && /보통|고유|칭호|한정|정관사/.test(v)) continue;
+      if (k === "상태" && v.startsWith("절대")) continue;
+      if (k === "고유명사" || k === "원어" || k === "참고") continue;
+      const hit = SHORT.find(([re]) => re.test(v)); if (!hit) continue;
+      const sv = v.replace(hit[0], hit[1]).replace(/[\s(].*$/, "");
+      if (/^(인칭|성|수|격|상태)$/.test(k)) pgn += sv; else bits.push(sv);
+    }
+    const greek = !/^[HA]/.test(c);
+    if (greek) return pos + (bits.join("") + pgn ? "." + bits.join("") + pgn : "");
+    const tail = [...bits, pgn].filter(Boolean).join("-");
+    return pos + (tail ? "-" + tail : "");
+  }).filter(Boolean).join(" | ");
+}
+
+// ---------- 인터리니어 ----------
+async function interHTML(b, c, v) {
+  const lang = isOT(b) ? "he" : "gr";
+  const [morph, lexG] = await Promise.all([loadMorph(), loadLex("G")]);
+  let h = "";
+  let ws = null;
+  try { const o = await loadBook(b); ws = o[c] && o[c][v]; } catch {}
+  if (ws && ws.length) {
+    h += `<div class="ilin ${lang}" ${lang === "he" ? 'dir="rtl"' : ""}>`;
+    for (const w of ws) {
+      const i = state.words.push({ w, b, c, v }) - 1;
+      h += `<button class="ib${w[6] === 2 ? " var" : ""}" type="button" data-w="${i}"><span class="ig">${esc(w[2])}</span><span class="iw">${esc(w[0])}</span><span class="it">${esc(w[1])}</span><span class="im">${esc(w[4])}</span><span class="ik">${esc(kparse(w[4], morph))}</span></button>`;
+    }
+    h += `</div>`;
+  } else h += `<p class="small">원문이 연결되지 않은 절입니다.</p>`;
+  if (lang === "he") {
+    let lx = null;
+    try { const L = await loadLxx(b); lx = L[c] && L[c][v]; } catch {}
+    if (lx && lx.length) {
+      h += `<p class="lxx-h">70인역 (Swete)</p><div class="ilin lx">`;
+      for (const x of lx) {
+        const i = state.words.push({ lxx: x, b, c, v }) - 1;
+        const L = x[1] ? lexG[x[1]] : null;
+        h += `<button class="ib" type="button" data-w="${i}"><span class="ig">${esc(L ? L[3] : "")}</span><span class="iw">${esc(x[0])}</span><span class="it">${esc(L ? L[0] : "")}</span><span class="im">${esc(x[2] || "")}</span><span class="ik">${esc(kparse(x[2], morph))}</span></button>`;
+      }
+      h += `</div>`;
+    }
+  }
+  return h;
+}
+
+// 70인역 단어 상세
+async function showLxxWord(i) {
+  const { lxx, b, c, v } = state.words[i];
+  const [surf, strong, mcode] = lxx;
+  const [lexG, morph, concG] = await Promise.all([loadLex("G"), loadMorph(), loadConc("G").catch(() => ({}))]);
+  let h = `<div class="big gr">${esc(surf)}</div><dl class="kv"><dt>본문</dt><dd>${esc(refStr(b, c, v))} (70인역)</dd></dl>`;
+  if (!strong) {
+    h += `<p class="hint">신약에 같은 형태가 없어 분해를 붙이지 못한 단어입니다.</p>`;
+  } else {
+    h += mcode ? `<p class="tip small"><b>추정</b> 신약에 같은 형태로 나오는 단어의 분해를 붙였습니다. 70인역 문맥에서는 다를 수 있습니다.</p>`
+      : `<p class="tip small"><b>추정</b> 어간으로 사전 표제어만 연결했습니다. 문법 분해는 없습니다.</p>`;
+    const rows = morph[mcode];
+    if (rows) h += `<div class="card"><h3>문법 정보 <span class="small">${esc(mcode)}</span></h3><dl class="kv">${rows.map(([k, val]) => `<dt>${esc(k)}</dt><dd>${esc(val)}</dd>`).join("")}</dl></div>`;
+    h += lexCard(lexG, strong, "G", concG);
+    h += `<div class="actions"><button class="btn" type="button" data-conc="${esc(strong)}">신약 용례 ${(concG[strong] || []).length}곳 보기</button></div>`;
+  }
+  openSheet(`${refStr(b, c, v)} · ${surf}`, h);
+}
+
+// ---------- TTS 패드 ----------
+let ttsPaused = false;
+function ttsPlay() {
+  if (ttsPaused && speechSynthesis.paused) { speechSynthesis.resume(); ttsPaused = false; return; }
+  const first = document.querySelector(".verse.hl")?.dataset.k;
+  const keys = state.list.map(r => refKey(...r));
+  speakKeys(first ? keys.filter(k => k >= +first) : keys);
+}
+
+// ---------- 필사 패드 ----------
+function copyDone() { return new Set(store.get("copyDone", [])); }
+function copyHTML(key, text) {
+  const done = copyDone().has(key);
+  return `<div class="copybox${done ? " ok" : ""}"><div class="ghost">${esc(text)}</div>
+    <textarea class="copyin" data-k="${key}" rows="2" placeholder="여기에 따라 쓰세요" spellcheck="false">${done ? esc(text) : ""}</textarea>
+    <p class="small copymsg">${done ? "필사 완료" : ""}</p></div>`;
+}
+function checkCopy(ta) {
+  const key = +ta.dataset.k;
+  const art = ta.closest(".verse"); const target = art.querySelector(".ghost").textContent;
+  const typed = ta.value;
+  const norm = s => s.replace(/\s+/g, " ").trim();
+  let ok = 0; while (ok < typed.length && typed[ok] === target[ok]) ok++;
+  const msg = art.querySelector(".copymsg");
+  if (norm(typed) === norm(target)) {
+    const d = copyDone(); d.add(key); store.set("copyDone", [...d]);
+    art.querySelector(".copybox").classList.add("ok"); msg.textContent = "필사 완료";
+  } else if (ok < typed.length) msg.textContent = `${ok + 1}번째 글자부터 본문과 다릅니다`;
+  else msg.textContent = `${Math.round(typed.length / Math.max(1, target.length) * 100)}%`;
+}
+
+// ---------- 연간 읽기표 ----------
+let PLAN = null;
+async function buildPlan() {
+  if (PLAN) return PLAN;
+  const vc = await getJSON("data/vcount.json");
+  const chs = []; let total = 0;
+  vc.forEach((arr, bi) => arr.forEach((n, ci) => { chs.push([bi + 1, ci + 1, n]); total += n; }));
+  const days = []; let acc = 0, cur = [];
+  for (const ch of chs) {
+    cur.push(ch); acc += ch[2];
+    const target = total * (days.length + 1) / 365;
+    if (acc >= target && days.length < 364) { days.push(cur); cur = []; }
+  }
+  if (cur.length) days.push(cur);
+  return PLAN = days;
+}
+function dayLabel(chs) {
+  const [b1, c1] = chs[0], [b2, c2] = chs[chs.length - 1];
+  return b1 === b2 ? `${BOOKS[b1-1][1]} ${c1}${c2 !== c1 ? "-" + c2 : ""}` : `${BOOKS[b1-1][1]} ${c1} - ${BOOKS[b2-1][1]} ${c2}`;
+}
+function todayIndex() {
+  const now = new Date(); const start = new Date(now.getFullYear(), 0, 1);
+  return Math.min(364, Math.floor((now - start) / 86400000));
+}
+async function showPlan() {
+  const days = await buildPlan();
+  const done = new Set(store.get("planDone", []));
+  const ti = todayIndex();
+  const reader = $("#reader");
+  $("#locText").textContent = "연간 읽기표";
+  $("#info").innerHTML = `1년 1독 · ${done.size}/365일 읽음 · 오늘은 <b>${ti + 1}일째</b>`;
+  let h = `<div class="headband"><span>1월 1일 시작 · 하루 약 85절</span><span>${Math.round(done.size / 3.65)}%</span></div><div class="plan">`;
+  days.forEach((chs, i) => {
+    const d = new Date(new Date().getFullYear(), 0, 1 + i);
+    h += `<div class="pday${i === ti ? " today" : ""}${done.has(i) ? " done" : ""}" id="pd${i}">
+      <button class="pchk" type="button" data-pchk="${i}" aria-pressed="${done.has(i)}" aria-label="${i + 1}일째 읽음 표시">${done.has(i) ? "✓" : ""}</button>
+      <span class="pdate">${d.getMonth() + 1}/${d.getDate()}</span>
+      <button class="pread" type="button" data-pday="${i}">${esc(dayLabel(chs))}</button></div>`;
+  });
+  reader.innerHTML = h + `</div>`;
+  document.getElementById("pd" + ti)?.scrollIntoView({ block: "center" });
+}
+async function openPlanDay(i) {
+  const days = await buildPlan();
+  const list = [];
+  for (const [b, c] of days[i]) list.push(...await versesOf(b, c));
+  state.pad = "home"; store.set("pad", "home"); $("#padName").textContent = PADS.home[1];
+  await showList(list, `${i + 1}일째 · ${dayLabel(days[i])}`);
+}
+
 // ---------- 시트 ----------
 let sheetStack = [];
 function openSheet(title, html, opts = {}) {
@@ -714,7 +922,7 @@ function openSheet(title, html, opts = {}) {
   else sheetStack = [];
   $("#sheetTitle").textContent = title;
   $("#sheetBody").innerHTML = html;
-  $("#sheet").className = "sheet" + (opts.full ? " full" : "");
+  $("#sheet").className = "sheet" + (opts.full ? " full" : "") + (opts.side ? " side" : "");
   if ($("#sheet").hidden) { try { history.pushState({ sheet: 1 }, ""); } catch {} }
   $("#sheet").hidden = false; $("#scrim").hidden = false;
   $("#sheetBody").scrollTop = 0;
@@ -754,6 +962,18 @@ document.addEventListener("click", async e => {
     return togglePanel(art, d.tool, key);
   }
   if (d.w !== undefined) return showWord(+d.w);
+  if (d.pad) {
+    sheetStack = []; hideSheet();
+    if (d.pad === "notes") return showNotes("notes");
+    if (d.pad === "marks") return showNotes("marks");
+    return setPad(d.pad);
+  }
+  if (d.pchk !== undefined) {
+    const i = +d.pchk, done = new Set(store.get("planDone", []));
+    done.has(i) ? done.delete(i) : done.add(i); store.set("planDone", [...done]);
+    return showPlan();
+  }
+  if (d.pday !== undefined) return openPlanDay(+d.pday);
   if (d.lex) return showLex(d.lex);
   if (d.conc) return showConc(d.conc);
   if (d.go) { const [b, c, v] = d.go.split(".").map(Number); return go(b, c, v); }
@@ -783,7 +1003,11 @@ document.addEventListener("click", async e => {
     case "btnTop": window.scrollTo({ top: 0 }); return $("#quick").focus();
     case "btnNotes": return showNotes();
     case "btnTheme": state.theme = state.theme === "dark" ? "light" : "dark"; store.set("theme", state.theme); document.documentElement.dataset.theme = state.theme; return;
-    case "btnSettings": case "settings": return showSettings();
+    case "btnSettings": return showMenu();
+    case "settings": sheetStack = []; return showSettings();
+    case "ttsPlay": return ttsPlay();
+    case "ttsPause": if (speechSynthesis.speaking) { speechSynthesis.pause(); ttsPaused = true; } return;
+    case "ttsStop": ttsQueue = []; speechSynthesis.cancel(); ttsPaused = false; document.querySelectorAll(".verse.hl").forEach(e => e.classList.remove("hl")); return;
     case "sheetClose": return closeSheet();
     case "quickHelp": return showHelp();
     case "rangeGo": return rangeSearch();
@@ -817,9 +1041,10 @@ document.addEventListener("change", e => {
   // 책을 바꾸면 장·절은 비움(책 전체), 장을 바꾸면 절은 비움(장 전체)
   if (id === "b1" || id === "c1") return fillCV($("#b1"), $("#c1"), $("#v1"), id === "b1" ? 0 : +$("#c1").value, 0);
   if (id === "b2" || id === "c2") return fillCV($("#b2"), $("#c2"), $("#v2"), id === "b2" ? 0 : +$("#c2").value, 0);
-  if (id === "ttsRate") store.set("ttsRate", +e.target.value);
+  if (id === "ttsRate" || id === "ttsRate2") { store.set("ttsRate", +e.target.value); if ($("#ttsRate2")) $("#ttsRate2").value = e.target.value; }
 });
 document.addEventListener("input", e => {
+  if (e.target.classList.contains("copyin")) return checkCopy(e.target);
   if (e.target.id === "fs") { state.fs = +e.target.value; store.set("fs", state.fs); applyFs(); $("#fsv").textContent = state.fs + "px"; }
 });
 window.addEventListener("popstate", () => { if (!$("#sheet").hidden) { sheetStack = []; hideSheet(); } });
@@ -836,6 +1061,9 @@ function applyFs() { document.documentElement.style.setProperty("--fs", state.fs
   $("#allEn").setAttribute("aria-pressed", String(state.allEn));
   $("#glossBtn").setAttribute("aria-pressed", String(state.gloss));
   try { state.hasKor = !!(await idb.get("meta", "kor")); await loadNotes(); } catch (e) { console.warn(e); }
+  $("#padName").textContent = (PADS[state.pad] || PADS.home)[1];
+  $("#ttsBar").hidden = state.pad !== "tts";
+  $("#ttsRate2").value = String(store.get("ttsRate", 1));
   await showChapter(state.b, state.c);
   window.scrollTo(0, 0);
   if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});

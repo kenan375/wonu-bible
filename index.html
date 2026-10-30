@@ -15,11 +15,12 @@
 <body>
 <header class="bar">
   <button class="brand" id="loc" type="button" aria-haspopup="dialog"><span class="logo">א</span><span id="locText">원어서재</span></button>
+  <span class="padname" id="padName">Basic Pad</span>
   <span class="grow"></span>
   <button class="iconbtn" id="btnTop" type="button" aria-label="검색 패널로">⌕</button>
   <button class="iconbtn" id="btnNotes" type="button" aria-label="노트">✎</button>
   <button class="iconbtn" id="btnTheme" type="button" aria-label="밝기 전환">☀</button>
-  <button class="iconbtn" id="btnSettings" type="button" aria-label="설정">☰</button>
+  <button class="iconbtn" id="btnSettings" type="button" aria-label="메뉴">☰</button>
 </header>
 
 <section class="ctrl" id="ctrl" aria-label="검색과 구간 선택">
@@ -47,6 +48,12 @@
     <button class="tbtn tog" type="button" id="allOrig" aria-pressed="false">원어 펼침</button>
     <button class="tbtn tog" type="button" id="glossBtn" aria-pressed="false">단어 뜻</button>
     <button class="tbtn tog" type="button" id="allEn" aria-pressed="false">EN</button>
+  </div>
+  <div class="ttsbar" id="ttsBar" hidden>
+    <button class="tbtn" type="button" id="ttsPlay">▶ 재생</button>
+    <button class="tbtn" type="button" id="ttsPause">⏸ 멈춤</button>
+    <button class="tbtn" type="button" id="ttsStop">■ 정지</button>
+    <select id="ttsRate2" aria-label="읽기 속도"><option value="0.8">0.8배</option><option value="1">1배</option><option value="1.2">1.2배</option><option value="1.5">1.5배</option></select>
   </div>
   <p class="info" id="info" aria-live="polite"></p>
 </section>

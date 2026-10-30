@@ -17,6 +17,8 @@ https://github.com/STEPBible/STEPBible-Data
 
 관주(약 43만 개, 추천 수 순): **OpenBible.info** Cross References, [CC BY](https://creativecommons.org/licenses/by/4.0/) (scrollmapper/bible_databases 경유).
 
+70인역: **Swete 판** (Open Greek and Latin First1KGreek, nathans/lxx-swete), [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/). 장절을 개역개정에 맞춰 다시 배열했고, 문법 분해는 신약 같은 형태에서 추정한 값입니다. 이 70인역 파생 데이터(data/lxx)는 CC BY-SA 4.0으로 공개합니다.
+
 영어 성경: **KJV** (퍼블릭 도메인).
 
 SQLite 읽기: [sql.js](https://github.com/sql-js/sql.js) (MIT).
