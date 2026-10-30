@@ -1,7 +1,7 @@
 // 원어서재 오프라인 저장소: 앱 화면은 미리 저장하고, 원어 데이터는 처음 받을 때 저장한다
-const VERSION = "v1";
+const VERSION = "v2";
 const SHELL = "wonu-shell-" + VERSION;
-const DATA = "wonu-data-v1"; // 데이터는 앱 버전이 바뀌어도 유지
+const DATA = "wonu-data-v2"; // 데이터가 바뀌면 숫자를 올린다
 const SHELL_FILES = ["./", "index.html", "style.css", "app.js", "manifest.webmanifest",
   "vendor/sql-wasm.js", "vendor/sql-wasm.wasm", "icons/icon-192.png", "icons/icon-512.png", "data/morph.json"];
 
@@ -10,7 +10,7 @@ self.addEventListener("install", e => {
 });
 self.addEventListener("activate", e => {
   e.waitUntil(caches.keys().then(keys => Promise.all(
-    keys.filter(k => k.startsWith("wonu-shell-") && k !== SHELL).map(k => caches.delete(k))
+    keys.filter(k => (k.startsWith("wonu-shell-") && k !== SHELL) || (k.startsWith("wonu-data-") && k !== DATA)).map(k => caches.delete(k))
   )).then(() => self.clients.claim()));
 });
 self.addEventListener("fetch", e => {

@@ -88,75 +88,105 @@ async function loadKor(b) {
 // ---------- 상태 ----------
 const state = {
   b: store.get("b", 1), c: store.get("c", 1),
-  view: store.get("view", "both"), gloss: store.get("gloss", false),
-  fs: store.get("fs", 18), hasKor: false, notes: new Map(), words: []
+  fs: store.get("fs", 20), gloss: store.get("gloss", false),
+  allOrig: store.get("allOrig", false), allEn: store.get("allEn", false),
+  theme: store.get("theme", "dark"),
+  hasKor: false, notes: new Map(), marks: new Set(),
+  list: [],          // 지금 화면에 보이는 절 [b,c,v]
+  mode: "chapter",   // chapter | range | refs
+  terms: [], words: []
 };
+const loadEn = b => getJSON(`data/en/${String(b).padStart(2, "0")}.json`);
+const loadXref = b => getJSON(`data/xref/${String(b).padStart(2, "0")}.json`);
+const korText = async (b, c, v) => { const k = await loadKor(b); return k && k[c] && k[c][v] ? k[c][v] : null; };
 
-// ---------- 본문 그리기 ----------
-async function render(scrollTo) {
-  const { b, c } = state;
-  store.set("b", b); store.set("c", c);
-  history.replaceState(null, "", `#${b}-${c}`);
-  $("#loc").textContent = `${BOOKS[b-1][0]} ${c}`;
-  document.title = `${refStr(b, c)} · 원어서재`;
+// 장의 절 수: 한글 → 원어 → 영어 순으로 확인
+async function verseCount(b, c) {
+  const k = await loadKor(b);
+  if (k && k[c]) return Math.max(...Object.keys(k[c]).map(Number));
+  try { const o = await loadBook(b); if (o[c]) return Math.max(...Object.keys(o[c]).map(Number)); } catch {}
+  try { const e = await loadEn(b); if (e[c]) return Math.max(...Object.keys(e[c]).map(Number)); } catch {}
+  return 0;
+}
+async function versesOf(b, c) {
+  const n = await verseCount(b, c);
+  return Array.from({ length: n }, (_, i) => [b, c, i + 1]);
+}
+
+// ---------- 목록 그리기 ----------
+const hlRe = () => state.terms.length ? new RegExp(state.terms.map(t => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|"), "g") : null;
+
+async function drawList(scrollKey) {
   const reader = $("#reader");
-  reader.className = `view-${state.view}${state.gloss ? " show-gloss" : ""}`;
-  reader.innerHTML = `<p class="small">불러오는 중…</p>`;
-  let orig = null, kor = null;
-  try { orig = await loadBook(b); } catch { /* 오프라인이면서 아직 저장 안 된 책 */ }
-  kor = await loadKor(b);
-  if (state.b !== b || state.c !== c) return; // 그 사이 다른 장으로 이동함
-  const och = orig ? orig[c] || {} : {};
-  const kch = kor ? kor[c] || {} : {};
-  const verseNums = new Set([...Object.keys(och), ...Object.keys(kch)].map(Number));
-  const nums = [...verseNums].sort((x, y) => x - y);
-  const lang = isOT(b) ? "he" : "gr";
+  reader.className = state.gloss ? "show-gloss" : "";
   state.words = [];
-  let html = "";
-  if (!state.hasKor) {
-    html += `<div class="notice"><b>개역개정 본문이 아직 없습니다.</b><span>설정에서 갖고 계신 성경 파일(.bdb)을 한 번 불러오면 원어와 나란히 볼 수 있습니다. 파일은 이 휴대폰 안에만 저장됩니다.</span><div><button class="btn" type="button" data-act="settings">파일 불러오기</button></div></div>`;
+  const list = state.list;
+  const multiBook = new Set(list.map(r => r[0])).size > 1;
+  const books = [...new Set(list.map(r => r[0]))];
+  const xrefs = {};
+  await Promise.all(books.map(async b => { try { xrefs[b] = await loadXref(b); } catch { xrefs[b] = null; } }));
+  const re = hlRe();
+  let h = "";
+  if (!state.hasKor) h += `<div class="notice"><b>개역개정 본문이 아직 없습니다.</b><span>설정(☰)에서 갖고 계신 성경 파일(.bdb)을 한 번 불러오면 한글 본문이 나옵니다. 파일은 이 휴대폰 안에만 저장됩니다. 그 전에는 영어(KJV)로 보여 드립니다.</span><div><button class="btn" type="button" data-act="settings">파일 불러오기</button></div></div>`;
+  if (state.mode === "chapter") h += `<div class="headband"><span>${esc(BOOKS[state.b-1][0])} ${state.c}장</span><span>#</span></div>`;
+  else h += `<div class="headband"><span>${list.length}절</span><span>#</span></div>`;
+  h += `<div class="list-wrap">`;
+  let lastBook = 0;
+  for (const [b, c, v] of list) {
+    if (multiBook && b !== lastBook) { h += `<p class="group-h">${esc(BOOKS[b-1][0])}</p>`; lastBook = b; }
+    const key = refKey(b, c, v);
+    const k = await korText(b, c, v);
+    let text = "", title = "";
+    if (k) { text = k.x; title = k.t || ""; }
+    else { try { const e = await loadEn(b); text = e[c] && e[c][v] || ""; } catch {} }
+    let th = esc(text); if (re) th = th.replace(re, m => `<mark>${m}</mark>`);
+    const xn = xrefs[b] && xrefs[b][c] && xrefs[b][c][v] ? xrefs[b][c][v].length : 0;
+    const ot = isOT(b);
+    const prefix = multiBook || state.mode !== "chapter" ? `${BOOKS[b-1][1]} ${c}:${v}` : `${c}:${v}`;
+    h += `<article class="verse" id="r${key}" data-k="${key}">
+      <div class="vrow"><div class="vtext">${title ? `<span class="ps-title">${esc(title)}</span>` : ""}<span class="vref">${prefix}</span>${th}</div>
+      <div class="vside"><span class="vnum">${v}</span><button class="enbtn" type="button" data-tool="en" data-k="${key}" aria-pressed="false" aria-label="영어 성경">EN</button></div></div>
+      <div class="vtools">
+        <button class="vt ${ot ? "he" : "gr"}" type="button" data-tool="orig" data-k="${key}" aria-pressed="false" aria-label="원어">${ot ? "א" : "α"}</button>
+        <button class="vt xr" type="button" data-tool="xref" data-k="${key}" aria-pressed="false" aria-label="관주">🔗<small>${xn || ""}</small></button>
+        <button class="vt nt${state.notes.has(key) ? " has" : ""}" type="button" data-tool="note" data-k="${key}" aria-label="노트">✎</button>
+        <button class="vt nt${state.marks.has(key) ? " has" : ""}" type="button" data-tool="mark" data-k="${key}" aria-label="북마크">⚑</button>
+        <button class="vt cp" type="button" data-tool="tts" data-k="${key}" aria-label="읽어주기">▶</button>
+        <button class="vt cp" type="button" data-tool="copy" data-k="${key}" aria-label="복사">#</button>
+      </div>
+      <div class="panels"></div></article>`;
   }
-  if (!orig) html += `<div class="notice"><b>원어 데이터를 불러오지 못했습니다.</b><span>인터넷에 연결된 상태에서 한 번 열면 이 책이 저장됩니다.</span></div>`;
-  html += `<h1 class="chap-title">${esc(BOOKS[b-1][0])} ${c}장</h1>`;
-  for (const v of nums) {
-    const ws = och[v];
-    const k = kch[v];
-    const noteOn = state.notes.has(refKey(b, c, v));
-    html += `<article class="verse" id="v${v}"><div class="vk"><button class="vn${noteOn ? " has-note" : ""}" type="button" data-note="${v}" aria-label="${v}절 노트">${v}</button>`;
-    if (k) {
-      if (k.t) html += `<span class="vk-text ps-title">${esc(k.t)}</span>`;
-      html += `<span class="vk-text">${esc(k.x)}</span>`;
+  h += `</div>`;
+  if (state.mode === "chapter") h += `<nav class="chap-nav"><button type="button" data-act="prev">‹ 이전 장</button><button type="button" data-act="next">다음 장 ›</button></nav>`;
+  reader.innerHTML = h;
+  // 전체 펼침 설정 적용
+  if (state.allOrig || state.allEn) {
+    for (const el of reader.querySelectorAll(".verse")) {
+      const key = +el.dataset.k;
+      if (state.allOrig) await togglePanel(el, "orig", key, true);
+      if (state.allEn && state.hasKor) await togglePanel(el, "en", key, true);
     }
-    html += `</div>`;
-    if (ws && ws.length) {
-      html += `<div class="vo ${lang}" ${lang === "he" ? 'dir="rtl" lang="he"' : 'lang="grc"'}>`;
-      for (const w of ws) {
-        const i = state.words.push({ w, v }) - 1;
-        const cls = "w" + (w[6] === 2 ? " var" : "") + (w[6] === 1 ? " ttl" : "");
-        html += `<button class="${cls}" type="button" data-w="${i}">${w[6] === 2 ? "[" + esc(w[0]) + "]" : esc(w[0])}<span class="g">${esc(w[2])}</span></button>`;
-      }
-      html += `</div>`;
-    } else if (orig) {
-      html += `<p class="no-orig">이 절은 원어 데이터의 장절 구분이 달라 원문이 연결되지 않았습니다.</p>`;
-    }
-    html += `</article>`;
   }
-  const last = BOOKS[b-1][2];
-  html += `<nav class="chap-nav"><button type="button" data-act="prev">‹ 이전 장</button><button type="button" data-act="next">다음 장 ›</button></nav>`;
-  reader.innerHTML = html;
-  if (scrollTo) {
-    const el = document.getElementById("v" + scrollTo);
+  if (scrollKey) {
+    const el = document.getElementById("r" + scrollKey);
     if (el) { el.classList.add("hl"); el.scrollIntoView({ block: "center" }); setTimeout(() => el.classList.remove("hl"), 2500); }
-  } else window.scrollTo(0, 0);
-  $("#prev").disabled = b === 1 && c === 1;
-  $("#next").disabled = b === 66 && c === last;
+  }
 }
 
-function go(b, c, v) {
+async function showChapter(b, c, v) {
   state.b = b; state.c = Math.min(Math.max(1, c), BOOKS[b-1][2]);
-  sheetStack = []; hideSheet();
-  render(v);
+  state.mode = "chapter"; state.terms = [];
+  store.set("b", state.b); store.set("c", state.c);
+  try { history.replaceState(history.state, "", `#${state.b}-${state.c}`); } catch {}
+  $("#locText").textContent = `${BOOKS[state.b-1][0]} ${state.c}`;
+  document.title = `${refStr(state.b, state.c)} · 원어서재`;
+  state.list = await versesOf(state.b, state.c);
+  $("#info").textContent = "";
+  syncRange(state.b, state.c, 0, state.b, state.c, 0);
+  await drawList(v ? refKey(state.b, state.c, v) : 0);
+  if (!v) $("#reader").scrollIntoView({ block: "start" });
 }
+function go(b, c, v) { sheetStack = []; hideSheet(); showChapter(b, c, v); }
 function step(d) {
   let { b, c } = state; c += d;
   if (c < 1) { if (b === 1) return; b--; c = BOOKS[b-1][2]; }
@@ -164,61 +194,91 @@ function step(d) {
   go(b, c);
 }
 
-// ---------- 시트 ----------
-let sheetStack = [];
-function openSheet(title, html, opts = {}) {
-  if (opts.push && !$("#sheet").hidden) sheetStack.push([$("#sheetTitle").textContent, $("#sheetBody").innerHTML, $("#sheet").className]);
-  else sheetStack = [];
-  $("#sheetTitle").textContent = title;
-  $("#sheetBody").innerHTML = html;
-  $("#sheet").className = "sheet" + (opts.full ? " full" : "");
-  if ($("#sheet").hidden) { try { history.pushState({ sheet: 1 }, ""); } catch {} }
-  $("#sheet").hidden = false; $("#scrim").hidden = false;
-  $("#sheetBody").scrollTop = 0;
-  $("#sheetClose").textContent = sheetStack.length ? "←" : "✕";
-  $("#sheetClose").setAttribute("aria-label", sheetStack.length ? "뒤로" : "닫기");
-}
-function closeSheet() {
-  if (sheetStack.length) {
-    const [t, h, cls] = sheetStack.pop();
-    $("#sheetTitle").textContent = t; $("#sheetBody").innerHTML = h; $("#sheet").className = cls;
-    $("#sheetClose").textContent = sheetStack.length ? "←" : "✕";
-    return;
+// ---------- 절별 패널 ----------
+async function togglePanel(article, tool, key, forceOpen) {
+  const btn = article.querySelector(`[data-tool="${tool}"]`);
+  const box = article.querySelector(".panels");
+  const existing = box.querySelector(`[data-p="${tool}"]`);
+  if (existing && !forceOpen) { existing.remove(); btn?.setAttribute("aria-pressed", "false"); return; }
+  if (existing) return;
+  const [b, c, v] = fromKey(key);
+  const div = document.createElement("div");
+  div.className = "panel"; div.dataset.p = tool;
+  if (tool === "en") {
+    let t = "";
+    try { const e = await loadEn(b); t = e[c] && e[c][v] || ""; } catch {}
+    div.innerHTML = `<h4>KJV</h4><div class="en-text">${esc(t) || "영어 본문이 없습니다."}</div>`;
+  } else if (tool === "orig") {
+    let ws = null;
+    try { const o = await loadBook(b); ws = o[c] && o[c][v]; } catch {}
+    if (!ws || !ws.length) div.innerHTML = `<p class="small">이 절은 원어 데이터의 장절 구분이 달라 원문이 연결되지 않았습니다.</p>`;
+    else {
+      const lang = isOT(b) ? "he" : "gr";
+      let h = `<h4>${lang === "he" ? "히브리어 (WLC)" : "헬라어 (NA28)"} · 단어를 누르세요</h4><div class="vo ${lang}" ${lang === "he" ? 'dir="rtl" lang="he"' : 'lang="grc"'}>`;
+      for (const w of ws) {
+        const i = state.words.push({ w, b, c, v }) - 1;
+        const cls = "w" + (w[6] === 2 ? " var" : "") + (w[6] === 1 ? " ttl" : "");
+        h += `<button class="${cls}" type="button" data-w="${i}">${w[6] === 2 ? "[" + esc(w[0]) + "]" : esc(w[0])}<span class="g">${esc(w[2])}</span></button>`;
+      }
+      div.innerHTML = h + `</div>`;
+    }
+  } else if (tool === "xref") {
+    let refs = [];
+    try { const x = await loadXref(b); refs = x[c] && x[c][v] || []; } catch {}
+    if (!refs.length) div.innerHTML = `<p class="small">관주가 없습니다.</p>`;
+    else {
+      div.innerHTML = `<h4>관주 ${refs.length}개 · 추천 많은 순</h4><div class="xr-list"></div>`;
+      await fillXref(div.querySelector(".xr-list"), refs, 0);
+    }
   }
-  if (history.state && history.state.sheet) { history.back(); return; } // popstate에서 닫힘
-  hideSheet();
+  box.appendChild(div);
+  btn?.setAttribute("aria-pressed", "true");
 }
-function hideSheet() {
-  $("#sheet").hidden = true; $("#scrim").hidden = true;
-  document.querySelectorAll(".w.sel").forEach(e => e.classList.remove("sel"));
+async function fillXref(listEl, refs, from) {
+  const to = Math.min(refs.length, from + 12);
+  let h = "";
+  for (let i = from; i < to; i++) {
+    const [b, c, v, ve] = refs[i];
+    let t = "";
+    if (state.hasKor) {
+      const parts = [];
+      for (let x = v; x <= (ve || v) && x < v + 6; x++) { const k = await korText(b, c, x); if (k) parts.push(k.x); }
+      t = parts.join(" ");
+    } else { try { const e = await loadEn(b); t = e[c] && e[c][v] || ""; } catch {} }
+    const label = `${BOOKS[b-1][1]} ${c}:${v}${ve ? "-" + ve : ""}`;
+    h += `<button class="xr-item" type="button" data-go="${b}.${c}.${v}"><span class="ref">${esc(label)}</span><span class="txt">${esc(t)}</span></button>`;
+  }
+  listEl.querySelector("[data-more]")?.remove();
+  listEl.insertAdjacentHTML("beforeend", h);
+  if (to < refs.length) {
+    const more = document.createElement("button");
+    more.type = "button"; more.className = "btn plain"; more.dataset.more = "1";
+    more.textContent = `${refs.length - to}개 더 보기`;
+    more.onclick = () => fillXref(listEl, refs, to);
+    listEl.appendChild(more);
+  }
 }
 
 // ---------- 단어 상세 ----------
-const MORPH_NOTE = "문법 정보";
 async function showWord(i) {
-  const { w, v } = state.words[i];
+  const { w, b, c, v } = state.words[i];
   document.querySelectorAll(".w.sel").forEach(e => e.classList.remove("sel"));
   document.querySelector(`.w[data-w="${i}"]`)?.classList.add("sel");
-  const lang = isOT(state.b) ? "H" : "G";
+  const lang = isOT(b) ? "H" : "G";
   const [lex, morph, conc] = await Promise.all([loadLex(lang), loadMorph(), loadConc(lang).catch(() => ({}))]);
   const [surf, translit, eng, main, mcode, segs, flag] = w;
   const cls = lang === "H" ? "he" : "gr";
   let h = `<div class="big ${cls}">${esc(surf)}</div>`;
-  h += `<dl class="kv"><dt>음역</dt><dd>${esc(translit) || "—"}</dd><dt>문맥 번역</dt><dd>${esc(eng) || "—"}</dd><dt>본문</dt><dd>${esc(refStr(state.b, state.c, v))}</dd></dl>`;
-  if (flag === 2) h += `<p class="hint">이 단어는 NA28 비평본문에는 없고 공인본문(TR)에만 있는 이형입니다. 개역개정에서 괄호로 표시된 구절과 관련될 수 있습니다.</p>`;
+  h += `<dl class="kv"><dt>음역</dt><dd>${esc(translit) || "—"}</dd><dt>문맥 번역</dt><dd>${esc(eng) || "—"}</dd><dt>본문</dt><dd>${esc(refStr(b, c, v))}</dd></dl>`;
+  if (flag === 2) h += `<p class="hint">이 단어는 NA28 비평본문에는 없고 공인본문(TR)에만 있는 이형입니다.</p>`;
   if (lang === "H" && segs.length > 1) {
     h += `<div class="card"><h3>단어 분해</h3><div class="segs">`;
-    segs.forEach(([t, s]) => {
-      const L = lex[s];
-      h += `<button class="seg${s === main ? " main" : ""}" type="button" data-lex="${esc(s)}"><span class="he">${esc(t)}</span><small>${esc(s)} · ${esc(L ? L[3] : "")}</small></button>`;
-    });
+    segs.forEach(([t, s]) => { const L = lex[s]; h += `<button class="seg${s === main ? " main" : ""}" type="button" data-lex="${esc(s)}"><span class="he">${esc(t)}</span><small>${esc(s)} · ${esc(L ? L[3] : "")}</small></button>`; });
     h += `</div></div>`;
   }
-  // 문법
-  const parts = (mcode || "").split("/").filter(Boolean);
-  const mrows = parts.map(code => morph[code]).filter(Boolean);
+  const mrows = (mcode || "").split("/").filter(Boolean).map(code => morph[code]).filter(Boolean);
   if (mrows.length) {
-    h += `<div class="card"><h3>${MORPH_NOTE} <span class="small">${esc(mcode)}</span></h3>`;
+    h += `<div class="card"><h3>문법 정보 <span class="small">${esc(mcode)}</span></h3>`;
     mrows.forEach((rows, idx) => {
       if (mrows.length > 1) h += `<p class="small">${idx + 1}번째 조각</p>`;
       h += `<dl class="kv">${rows.map(([k, val]) => `<dt>${esc(k)}</dt><dd>${esc(val)}</dd>`).join("")}</dl>`;
@@ -227,7 +287,230 @@ async function showWord(i) {
   }
   h += lexCard(lex, main, lang, conc);
   h += `<div class="actions"><button class="btn" type="button" data-conc="${esc(main)}">용례 ${(conc[main] || []).length}곳 보기</button><button class="btn ghost" type="button" data-addword="${i}">노트에 담기</button></div>`;
-  openSheet(`${refStr(state.b, state.c, v)} · ${surf}`, h);
+  openSheet(`${refStr(b, c, v)} · ${surf}`, h);
+}
+
+// ---------- 노트 · 북마크 ----------
+async function loadNotes() {
+  state.notes = new Map((await idb.all("notes")).map(([k, v]) => [k, v]));
+  state.marks = new Set(((await idb.get("meta", "marks")) || []));
+}
+async function showNote(key, append) {
+  const [b, c, v] = fromKey(key);
+  const n = state.notes.get(key);
+  const k = await korText(b, c, v);
+  let text = n ? n.text : "";
+  if (append) text = (text ? text.replace(/\s+$/, "") + "\n" : "") + append;
+  const h = `${k ? `<p style="font-family:var(--f-ko);margin:0">${esc(k.x)}</p>` : ""}
+    <div class="field"><label for="noteText">묵상 · 연구 메모</label><textarea id="noteText">${esc(text)}</textarea></div>
+    <div class="actions"><button class="btn" type="button" data-savenote="${key}">저장</button>${n ? `<button class="btn plain" type="button" data-delnote="${key}">삭제</button>` : ""}</div>
+    <p class="hint">원어 단어 화면의 "노트에 담기"를 누르면 원어 정보가 한 줄씩 추가됩니다.</p>`;
+  openSheet(`노트 · ${refStr(b, c, v)}`, h, { push: !!append });
+  if (append) toast("단어를 메모에 담았습니다. 저장을 눌러 주세요.");
+}
+function markTools() {
+  document.querySelectorAll('[data-tool="note"]').forEach(el => el.classList.toggle("has", state.notes.has(+el.dataset.k)));
+  document.querySelectorAll('[data-tool="mark"]').forEach(el => el.classList.toggle("has", state.marks.has(+el.dataset.k)));
+}
+async function saveNote(key) {
+  const text = $("#noteText").value.trim();
+  if (!text) return delNote(key);
+  const n = { text, updated: Date.now() };
+  await idb.put("notes", key, n); state.notes.set(key, n);
+  sheetStack = []; closeSheet(); toast("저장했습니다"); markTools();
+}
+async function delNote(key) {
+  await idb.del("notes", key); state.notes.delete(key);
+  sheetStack = []; closeSheet(); toast("노트를 지웠습니다"); markTools();
+}
+async function toggleMark(key) {
+  if (state.marks.has(key)) state.marks.delete(key); else state.marks.add(key);
+  await idb.put("meta", "marks", [...state.marks]);
+  markTools(); toast(state.marks.has(key) ? "북마크했습니다" : "북마크를 뺐습니다");
+}
+async function showNotes(tab) {
+  tab = tab || "notes";
+  const notes = [...state.notes.entries()].sort((a, b) => a[0] - b[0]);
+  const marks = [...state.marks].sort((a, b) => a - b);
+  let h = `<div class="chips"><button class="chip" type="button" data-ntab="notes" aria-pressed="${tab === "notes"}">노트 ${notes.length}</button><button class="chip" type="button" data-ntab="marks" aria-pressed="${tab === "marks"}">북마크 ${marks.length}</button></div>`;
+  if (tab === "notes") {
+    h += `<div class="actions"><button class="btn" type="button" data-act="export" ${notes.length ? "" : "disabled"}>말씀서재로 내보내기 (.md)</button><button class="btn ghost" type="button" data-act="copymd" ${notes.length ? "" : "disabled"}>마크다운 복사</button></div>`;
+    if (!notes.length) h += `<p class="hint">아직 노트가 없습니다. 절 아래 ✎를 누르면 메모를 남길 수 있습니다.</p>`;
+    h += `<div class="list">`;
+    for (const [k, n] of notes) { const [b, c, v] = fromKey(k); h += `<button class="item" type="button" data-go="${b}.${c}.${v}"><span class="ref">${esc(refStr(b, c, v))}</span><span class="txt">${esc(n.text.slice(0, 120))}${n.text.length > 120 ? "…" : ""}</span></button>`; }
+    h += `</div>`;
+  } else {
+    if (marks.length) h += `<div class="actions"><button class="btn" type="button" data-act="showmarks">북마크 절 모아 보기</button></div>`;
+    else h += `<p class="hint">절 아래 ⚑를 누르면 북마크됩니다.</p>`;
+    h += `<div class="list">`;
+    for (const k of marks) { const [b, c, v] = fromKey(k); const kt = await korText(b, c, v); h += `<button class="item" type="button" data-go="${b}.${c}.${v}"><span class="ref">${esc(refStr(b, c, v))}</span><span class="txt">${esc(kt ? kt.x : "")}</span></button>`; }
+    h += `</div>`;
+  }
+  openSheet("노트 · 북마크", h, { full: true });
+}
+
+// ---------- 읽어주기 (TTS) ----------
+let ttsQueue = [];
+function speakKeys(keys) {
+  if (!("speechSynthesis" in window)) return toast("이 기기는 읽어주기를 지원하지 않습니다");
+  speechSynthesis.cancel(); ttsQueue = keys.slice();
+  speakNext();
+}
+async function speakNext() {
+  const key = ttsQueue.shift(); if (!key) return;
+  const [b, c, v] = fromKey(key);
+  const k = await korText(b, c, v);
+  let text = k ? k.x : "", lang = "ko-KR";
+  if (!text) { try { const e = await loadEn(b); text = e[c][v]; lang = "en-US"; } catch {} }
+  if (!text) return speakNext();
+  const u = new SpeechSynthesisUtterance(text);
+  u.lang = lang; u.rate = store.get("ttsRate", 1);
+  u.onend = speakNext;
+  document.querySelectorAll(".verse.hl").forEach(e => e.classList.remove("hl"));
+  document.getElementById("r" + key)?.classList.add("hl");
+  speechSynthesis.speak(u);
+}
+
+// ---------- 책·장 선택 ----------
+function showPicker(selB) {
+  const b = selB || state.b;
+  let h = `<p class="testament">구약</p><div class="books">`;
+  BOOKS.forEach(([name, ab], i) => {
+    if (i === 39) h += `</div><p class="testament">신약</p><div class="books">`;
+    h += `<button type="button" class="${i + 1 === b ? "cur" : ""}" data-pickb="${i + 1}" title="${esc(name)}">${esc(ab)}</button>`;
+  });
+  h += `</div><p class="testament">${esc(BOOKS[b-1][0])} · 장</p><div class="chaps">`;
+  for (let c = 1; c <= BOOKS[b-1][2]; c++) h += `<button type="button" class="${b === state.b && c === state.c ? "cur" : ""}" data-pickc="${b}.${c}">${c}</button>`;
+  openSheet("성경 선택", h + `</div>`, { full: true });
+}
+
+// ---------- 구간 선택 패널 ----------
+function fillBooks(sel, val) {
+  sel.innerHTML = BOOKS.map((x, i) => `<option value="${i + 1}"${i + 1 === val ? " selected" : ""}>${esc(x[0])}</option>`).join("");
+}
+async function fillCV(bSel, cSel, vSel, cVal, vVal) {
+  const b = +bSel.value;
+  cSel.innerHTML = `<option value="0">장</option>` + Array.from({ length: BOOKS[b-1][2] }, (_, i) => `<option value="${i + 1}"${i + 1 === cVal ? " selected" : ""}>${i + 1}</option>`).join("");
+  const c = +cSel.value;
+  const n = c ? await verseCount(b, c) : 0;
+  vSel.innerHTML = `<option value="0">절</option>` + Array.from({ length: n }, (_, i) => `<option value="${i + 1}"${i + 1 === vVal ? " selected" : ""}>${i + 1}</option>`).join("");
+}
+async function syncRange(b1, c1, v1, b2, c2, v2) {
+  fillBooks($("#b1"), b1); fillBooks($("#b2"), b2);
+  await fillCV($("#b1"), $("#c1"), $("#v1"), c1, v1);
+  await fillCV($("#b2"), $("#c2"), $("#v2"), c2, v2);
+}
+
+// 범위 [b1,c1,v1]~[b2,c2,v2]의 모든 절 (장·절 0이면 처음/끝)
+async function collectRange(b1, c1, v1, b2, c2, v2) {
+  let a = [b1, c1, v1], z = [b2, c2, v2];
+  const startKey = refKey(a[0], a[1] || 1, a[2] || 1), endKey = refKey(z[0], z[1] || 999, z[2] || 999);
+  if (startKey > endKey) [a, z] = [z, a];
+  const sK = refKey(a[0], a[1] || 1, a[2] || 1), eK = refKey(z[0], z[1] || 999, z[2] || 999);
+  const out = [];
+  for (let b = a[0]; b <= z[0]; b++) {
+    for (let c = 1; c <= BOOKS[b-1][2]; c++) {
+      if (refKey(b, c, 999) < sK || refKey(b, c, 0) > eK) continue;
+      for (const r of await versesOf(b, c)) { const k = refKey(...r); if (k >= sK && k <= eK) out.push(r); }
+    }
+  }
+  return out;
+}
+async function filterByTerms(list, terms, mode) {
+  if (!terms.length) return { list, hits: 0 };
+  const out = []; let hits = 0;
+  for (const r of list) {
+    const k = await korText(...r);
+    let t = k ? k.x : "";
+    if (!t) { try { const e = await loadEn(r[0]); t = e[r[1]][r[2]] || ""; } catch {} }
+    const counts = terms.map(term => t.split(term).length - 1);
+    const ok = mode === "and" ? counts.every(n => n > 0) : counts.some(n => n > 0);
+    if (ok) { out.push(r); hits += counts.reduce((a, b) => a + b, 0); }
+  }
+  return { list: out, hits };
+}
+const LIMIT = 3000;
+async function showList(list, label, terms, andor) {
+  state.terms = terms || [];
+  let info = "";
+  if (state.terms.length) {
+    const { list: f, hits } = await filterByTerms(list, state.terms, andor || "or");
+    list = f;
+    info = `<b>${esc(state.terms.join(andor === "and" ? " + " : " / "))}</b> · ${f.length.toLocaleString()}절 · 검색어 ${hits.toLocaleString()}회`;
+  } else info = `${esc(label)} · ${list.length.toLocaleString()}절`;
+  if (list.length > LIMIT) { info += ` · 처음 ${LIMIT.toLocaleString()}절만 표시`; list = list.slice(0, LIMIT); }
+  state.mode = "range"; state.list = list;
+  $("#locText").textContent = label;
+  $("#info").innerHTML = info;
+  await drawList();
+  $("#reader").scrollIntoView({ block: "start" });
+}
+
+// ---------- 빠른 검색 (파워바이블 문법) ----------
+function bookOf(name) {
+  name = name.replace(/\s/g, "");
+  let b = BOOKS.findIndex(x => x[1] === name || x[0] === name) + 1;
+  if (!b) b = BOOKS.findIndex(x => x[0].startsWith(name)) + 1;
+  return b;
+}
+const REF = /^\s*(\d?\s?[가-힣]+)\s*(\d+)(?:\s*[:장]\s*(\d+))?\s*절?\s*$/;
+function parseOne(s) {
+  const m = s.match(REF); if (!m) return null;
+  const b = bookOf(m[1]); if (!b) return null;
+  return [b, +m[2], m[3] ? +m[3] : 0];
+}
+async function quickSearch(q) {
+  q = q.trim(); if (!q) return;
+  try { const hist = store.get("qhist", []).filter(x => x !== q); hist.unshift(q); store.set("qhist", hist.slice(0, 20)); } catch {}
+  // (7) 여러 절: 창 15:1; 출 1:2, 레 2:3
+  if (q.includes(";") || /\d\s*,\s*[가-힣]/.test(q)) {
+    const parts = q.split(/[;,]/).map(s => s.trim()).filter(Boolean);
+    const refs = parts.map(parseOne);
+    if (refs.every(Boolean)) {
+      const list = [];
+      for (const [b, c, v] of refs) list.push(...(v ? [[b, c, v]] : await versesOf(b, c)));
+      return showList(list, q);
+    }
+  }
+  // (5) 장 안 검색어: 창 15~아브람
+  let m = q.match(/^(.+?)~(.+)$/);
+  if (m) {
+    const r = parseOne(m[1]);
+    if (r) return showList(r[2] ? [[r[0], r[1], r[2]]] : await versesOf(r[0], r[1]), `${refStr(r[0], r[1])}`, m[2].split(/[,\s]+/).filter(Boolean), "and");
+  }
+  // (3)(4) 구간: 창 15:1-16 / 창 15:1-출 1:2
+  m = q.match(/^(.+?\d+(?:\s*[:장]\s*\d+)?)\s*-\s*(.+)$/);
+  if (m) {
+    const a = parseOne(m[1]);
+    let z = /^\d+$/.test(m[2].trim()) ? (a && a[2] ? [a[0], a[1], +m[2]] : a && [a[0], +m[2], 0]) : parseOne(m[2]);
+    if (a && z) return showList(await collectRange(a[0], a[1], a[2], z[0], z[1], z[2]), q);
+  }
+  // (1)(2) 한 절 / 한 장
+  const r = parseOne(q);
+  if (r && r[1] <= BOOKS[r[0]-1][2]) return go(r[0], r[1], r[2]);
+  // 책 이름만: 그 책 1장
+  if (/^[가-힣\d\s]+$/.test(q) && BOOKS.some(x => x[0] === q.replace(/\s/g, "") || x[1] === q.replace(/\s/g, ""))) return go(bookOf(q), 1);
+  // (6) 전체 검색어: 사랑, 믿음
+  const terms = q.split(/[,]+/).map(s => s.trim()).filter(Boolean);
+  if (!state.hasKor) toast("한글 본문이 없어 영어(KJV)에서 찾습니다");
+  return showList(await collectRange(1, 0, 0, 66, 0, 0), "성경 전체", terms, $("#andor").value);
+}
+async function rangeSearch() {
+  const g = id => +$(id).value;
+  const terms = $("#kw").value.split(/[,\s]+/).map(s => s.trim()).filter(Boolean);
+  const list = await collectRange(g("#b1"), g("#c1"), g("#v1"), g("#b2"), g("#c2"), g("#v2"));
+  const lab = (b, c, v) => `${BOOKS[b-1][1]}${c ? " " + c : ""}${v ? ":" + v : ""}`;
+  const label = `${lab(g("#b1"), g("#c1"), g("#v1"))} ~ ${lab(g("#b2"), g("#c2"), g("#v2"))}`;
+  if (!terms.length && list.length > LIMIT) toast(`${list.length.toLocaleString()}절이라 검색어 없이 처음 ${LIMIT}절만 보여 드립니다`);
+  return showList(list, label, terms, $("#andor").value);
+}
+function showHelp() {
+  const rows = [["창 15:1", "한 절"], ["창 15", "한 장"], ["창 15:1-16", "같은 장 구간"], ["창 15:1-출 1:2", "책을 넘는 구간"], ["창 15~아브람", "한 장 안에서 단어 찾기"], ["사랑, 믿음", "성경 전체에서 단어 찾기 (and/or는 아래 선택값)"], ["창 15:1; 출 1:2, 레 2:3", "떨어진 절 묶어 보기"]];
+  const hist = store.get("qhist", []);
+  const h = `<dl class="kv help">${rows.map(([a, b]) => `<dt>${esc(a)}</dt><dd>${esc(b)}</dd>`).join("")}</dl>
+    <p class="hint">구간 선택에서 장·절을 비워 두면 책 전체가 범위가 됩니다. 끝 책이 시작 책보다 앞이어도 됩니다.</p>
+    ${hist.length ? `<h3 class="small">최근 검색</h3><div class="chips">${hist.map(x => `<button class="chip" type="button" data-q="${esc(x)}">${esc(x)}</button>`).join("")}</div>` : ""}`;
+  openSheet("빠른 검색 문법", h);
 }
 
 function lexCard(lex, s, lang, conc) {
@@ -305,51 +588,7 @@ async function drawConc(reset) {
   $("#concMore").innerHTML = to < refs.length ? `<button class="btn plain" type="button" data-act="concmore">${refs.length - to}곳 더 보기</button>` : (refs.length ? "" : `<p class="hint">이 범위에는 용례가 없습니다.</p>`);
 }
 
-// ---------- 노트 ----------
-async function loadNotes() {
-  state.notes = new Map((await idb.all("notes")).map(([k, v]) => [k, v]));
-}
-async function showNote(v, append) {
-  const { b, c } = state, key = refKey(b, c, v);
-  const n = state.notes.get(key);
-  const k = await loadKor(b);
-  const kt = k && k[c] && k[c][v] ? k[c][v].x : "";
-  let text = n ? n.text : "";
-  if (append) text = (text ? text.replace(/\s+$/, "") + "\n" : "") + append;
-  const h = `${kt ? `<p class="txt" style="font-family:var(--f-ko)">${esc(kt)}</p>` : ""}
-    <div class="field"><label for="noteText">묵상 · 연구 메모</label><textarea id="noteText">${esc(text)}</textarea></div>
-    <div class="actions"><button class="btn" type="button" data-savenote="${key}">저장</button>${n ? `<button class="btn plain" type="button" data-delnote="${key}">삭제</button>` : ""}</div>
-    <p class="hint">단어 상세 화면의 "노트에 담기"를 누르면 원어 정보가 이 메모에 한 줄씩 추가됩니다.</p>`;
-  openSheet(`노트 · ${refStr(b, c, v)}`, h, { push: !!append });
-  if (append) toast("단어를 메모에 담았습니다. 저장을 눌러 주세요.");
-}
-async function saveNote(key) {
-  const text = $("#noteText").value.trim();
-  if (!text) return delNote(key);
-  const n = { text, updated: Date.now() };
-  await idb.put("notes", key, n); state.notes.set(key, n);
-  sheetStack = []; closeSheet(); toast("저장했습니다");
-  markNotes();
-}
-async function delNote(key) {
-  await idb.del("notes", key); state.notes.delete(key);
-  sheetStack = []; closeSheet(); toast("노트를 지웠습니다");
-  markNotes();
-}
-function markNotes() {
-  document.querySelectorAll(".vn").forEach(el => el.classList.toggle("has-note", state.notes.has(refKey(state.b, state.c, +el.dataset.note))));
-}
-async function showNotes() {
-  const items = [...state.notes.entries()].sort((a, b) => a[0] - b[0]);
-  let h = `<div class="actions"><button class="btn" type="button" data-act="export" ${items.length ? "" : "disabled"}>말씀서재로 내보내기 (.md)</button><button class="btn ghost" type="button" data-act="copymd" ${items.length ? "" : "disabled"}>마크다운 복사</button></div>`;
-  if (!items.length) h += `<p class="hint">아직 노트가 없습니다. 본문에서 절 번호를 누르면 메모를 남길 수 있습니다.</p>`;
-  h += `<div class="list">`;
-  for (const [k, n] of items) {
-    const [b, c, v] = fromKey(k);
-    h += `<button class="item" type="button" data-go="${b}.${c}.${v}"><span class="ref">${esc(refStr(b, c, v))}</span><span class="txt">${esc(n.text.slice(0, 120))}${n.text.length > 120 ? "…" : ""}</span></button>`;
-  }
-  openSheet(`노트 ${items.length}개`, h + `</div>`, { full: true });
-}
+
 async function buildMarkdown() {
   const items = [...state.notes.entries()].sort((a, b) => a[0] - b[0]);
   const today = new Date();
@@ -386,59 +625,6 @@ async function copyMarkdown() {
   catch { toast("복사가 막혀 있습니다. 내보내기를 써 주세요."); }
 }
 
-// ---------- 책·장 선택 ----------
-function showPicker(selB) {
-  const b = selB || state.b;
-  let h = `<p class="testament">구약</p><div class="books">`;
-  BOOKS.forEach(([name, ab], i) => {
-    if (i === 39) h += `</div><p class="testament">신약</p><div class="books">`;
-    h += `<button type="button" class="${i + 1 === b ? "cur" : ""}" data-pickb="${i + 1}" title="${esc(name)}">${esc(ab)}</button>`;
-  });
-  h += `</div><p class="testament">${esc(BOOKS[b-1][0])} · 장</p><div class="chaps">`;
-  for (let c = 1; c <= BOOKS[b-1][2]; c++) h += `<button type="button" class="${b === state.b && c === state.c ? "cur" : ""}" data-pickc="${b}.${c}">${c}</button>`;
-  openSheet("성경 선택", h + `</div>`, { full: true });
-}
-
-// ---------- 찾기 ----------
-function parseRef(q) {
-  const m = q.trim().replace(/\s+/g, " ").match(/^(\d?\s?[가-힣]+)\s?(\d+)?(?:[:장\s]\s?(\d+))?절?$/);
-  if (!m) return null;
-  const name = m[1].replace(/\s/g, "");
-  let b = BOOKS.findIndex(x => x[1] === name || x[0] === name) + 1;
-  // 숫자 없이 책 이름 일부만 쓴 경우(예: "전도")는 단어 검색으로 본다
-  if (!b && m[2]) b = BOOKS.findIndex(x => x[0].startsWith(name)) + 1;
-  if (!b) return null;
-  return [b, +(m[2] || 1), m[3] ? +m[3] : 0];
-}
-function showSearch() {
-  const h = `<form id="searchForm" class="field"><label for="q">장절(예: 요 3:16, 시 23) 또는 한글 단어</label>
-    <input type="search" id="q" autocomplete="off" enterkeyhint="search" placeholder="요 3:16"></form>
-    <p class="hint">한글 단어 검색은 개역개정을 불러온 뒤에 됩니다. 여러 단어는 띄어 쓰면 모두 들어간 절을 찾습니다.</p>
-    <div class="list" id="results"></div>`;
-  openSheet("찾기", h, { full: true });
-  setTimeout(() => $("#q")?.focus(), 50);
-}
-async function runSearch(q) {
-  const r = parseRef(q);
-  if (r && (r[1] <= BOOKS[r[0]-1][2])) return go(r[0], r[1], r[2]);
-  const out = $("#results");
-  if (!state.hasKor) { out.innerHTML = `<p class="hint">장절 형식이 아니고, 한글 본문이 아직 없어 단어로 찾을 수 없습니다.</p>`; return; }
-  const terms = q.trim().split(/\s+/).filter(Boolean);
-  if (!terms.length) return;
-  out.innerHTML = `<p class="small">찾는 중…</p>`;
-  const hits = [];
-  for (let b = 1; b <= 66 && hits.length < 500; b++) {
-    const k = await loadKor(b); if (!k) continue;
-    for (const c of Object.keys(k)) for (const v of Object.keys(k[c])) {
-      const x = k[c][v].x;
-      if (terms.every(t => x.includes(t))) hits.push([b, +c, +v, x]);
-    }
-  }
-  hits.sort((a, z) => refKey(a[0], a[1], a[2]) - refKey(z[0], z[1], z[2]));
-  const re = new RegExp(terms.map(t => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|"), "g");
-  out.innerHTML = `<p class="small">${hits.length >= 500 ? "500절 이상" : hits.length + "절"}</p>` +
-    hits.slice(0, 500).map(([b, c, v, x]) => `<button class="item" type="button" data-go="${b}.${c}.${v}"><span class="ref">${esc(refStr(b, c, v))}</span><span class="txt">${esc(x).replace(re, m => `<mark>${m}</mark>`)}</span></button>`).join("");
-}
 
 // ---------- 설정 · 불러오기 ----------
 async function showSettings() {
@@ -450,12 +636,14 @@ async function showSettings() {
     <div class="progress" hidden id="impProg"><span></span></div><p class="small" id="impMsg"></p>
     ${meta ? `<div><button class="btn plain" type="button" data-act="delkor">한글 본문 지우기</button></div>` : ""}</div>
   <div class="card"><h3>오프라인 저장</h3>
-    <p class="hint">지금은 읽은 책만 저장됩니다. 와이파이에서 한 번 눌러 두면 인터넷 없이 모든 기능을 쓸 수 있습니다 (약 15MB 전송).</p>
+    <p class="hint">지금은 읽은 책만 저장됩니다. 와이파이에서 한 번 눌러 두면 인터넷 없이 모든 기능을 쓸 수 있습니다 (약 25MB 전송).</p>
     <div><button class="btn ghost" type="button" data-act="offline">전체 원어 데이터 저장</button></div>
     <div class="progress" hidden id="offProg"><span></span></div><p class="small" id="offMsg"></p></div>
-  <div class="card"><h3>글자 크기</h3><div class="row"><input type="range" id="fs" min="14" max="26" step="1" value="${state.fs}" style="flex:1"><span id="fsv">${state.fs}px</span></div></div>
+  <div class="card"><h3>글자 크기</h3><div class="row"><input type="range" id="fs" min="14" max="30" step="1" value="${state.fs}" style="flex:1"><span id="fsv">${state.fs}px</span></div></div>
+  <div class="card"><h3>읽어주기 속도</h3><select id="ttsRate">${[0.8,1,1.2,1.5].map(r => `<option value="${r}"${store.get("ttsRate",1)===r?" selected":""}>${r}배</option>`).join("")}</select>
+    <p class="hint">한국어 목소리가 어색하면 휴대폰 설정 → 일반 → 글자 읽어주기 → 기본 엔진을 삼성 TTS로 바꿔 보세요.</p></div>
   <div class="card"><h3>자료 출처</h3>
-    <p class="small">히브리어·헬라어 원문, 스트롱 번호, 문법 분해, 사전: <b>STEPBible.org</b> (Tyndale House, Cambridge) 데이터, CC BY 4.0. 헬라어 본문은 NA28 기준이며 공인본문(TR)에만 있는 단어는 [괄호]로 흐리게 표시합니다.</p>
+    <p class="small">히브리어·헬라어 원문, 스트롱 번호, 문법 분해, 사전: <b>STEPBible.org</b> (Tyndale House, Cambridge) 데이터, CC BY 4.0. 관주: OpenBible.info, CC BY. 영어: KJV(퍼블릭 도메인). 헬라어 본문은 NA28 기준이며 공인본문(TR)에만 있는 단어는 [괄호]로 흐리게 표시합니다.</p>
     <p class="small">한글 본문은 사용자가 직접 불러온 개인 파일이며 앱에 포함되어 있지 않습니다.</p></div>`;
   openSheet("설정", h, { full: true });
 }
@@ -499,7 +687,7 @@ async function importBdb(file) {
     korCache.clear(); state.hasKor = true;
     bar.style.width = "100%"; msg.textContent = `완료: ${count.toLocaleString()}절을 불러왔습니다.`;
     toast("한글 본문을 불러왔습니다");
-    render();
+    showChapter(state.b, state.c);
   } catch (e) {
     msg.textContent = "불러오지 못했습니다: " + e.message; bar.style.width = "0";
   }
@@ -509,7 +697,7 @@ async function saveOffline() {
   const msg = $("#offMsg"), prog = $("#offProg"), bar = prog.querySelector("span");
   prog.hidden = false;
   const files = ["data/morph.json", "data/lex/H.json", "data/lex/G.json", "data/conc/H.json", "data/conc/G.json"];
-  for (let b = 1; b <= 66; b++) files.push(`data/books/${String(b).padStart(2, "0")}.json`);
+  for (let b = 1; b <= 66; b++) for (const dir of ["books", "en", "xref"]) files.push(`data/${dir}/${String(b).padStart(2, "0")}.json`);
   let done = 0, fail = 0;
   for (const f of files) {
     try { const r = await fetch(f); if (!r.ok) fail++; await r.arrayBuffer(); } catch { fail++; }
@@ -518,18 +706,61 @@ async function saveOffline() {
   msg.textContent = fail ? `${fail}개를 받지 못했습니다. 다시 눌러 주세요.` : "모두 저장했습니다. 이제 인터넷 없이 쓸 수 있습니다.";
 }
 
+
+// ---------- 시트 ----------
+let sheetStack = [];
+function openSheet(title, html, opts = {}) {
+  if (opts.push && !$("#sheet").hidden) sheetStack.push([$("#sheetTitle").textContent, $("#sheetBody").innerHTML, $("#sheet").className]);
+  else sheetStack = [];
+  $("#sheetTitle").textContent = title;
+  $("#sheetBody").innerHTML = html;
+  $("#sheet").className = "sheet" + (opts.full ? " full" : "");
+  if ($("#sheet").hidden) { try { history.pushState({ sheet: 1 }, ""); } catch {} }
+  $("#sheet").hidden = false; $("#scrim").hidden = false;
+  $("#sheetBody").scrollTop = 0;
+  $("#sheetClose").textContent = sheetStack.length ? "←" : "✕";
+}
+function closeSheet() {
+  if (sheetStack.length) {
+    const [t, h, cls] = sheetStack.pop();
+    $("#sheetTitle").textContent = t; $("#sheetBody").innerHTML = h; $("#sheet").className = cls;
+    $("#sheetClose").textContent = sheetStack.length ? "←" : "✕";
+    return;
+  }
+  if (history.state && history.state.sheet) { history.back(); return; }
+  hideSheet();
+}
+function hideSheet() {
+  $("#sheet").hidden = true; $("#scrim").hidden = true;
+  document.querySelectorAll(".w.sel").forEach(e => e.classList.remove("sel"));
+}
+
 // ---------- 이벤트 ----------
 document.addEventListener("click", async e => {
   const t = e.target.closest("button, [data-act]");
   if (!t) return;
   const d = t.dataset;
+  if (d.tool) {
+    const key = +d.k, art = t.closest(".verse");
+    if (d.tool === "note") return showNote(key);
+    if (d.tool === "mark") return toggleMark(key);
+    if (d.tool === "tts") return speakKeys(state.list.map(r => refKey(...r)).filter(k => k >= key));
+    if (d.tool === "copy") {
+      const [b, c, v] = fromKey(key); const k = await korText(b, c, v);
+      let txt = k ? k.x : ""; if (!txt) { try { txt = (await loadEn(b))[c][v]; } catch {} }
+      try { await navigator.clipboard.writeText(`${txt} (${refStr(b, c, v)})`); toast("복사했습니다"); } catch { toast("복사가 막혀 있습니다"); }
+      return;
+    }
+    return togglePanel(art, d.tool, key);
+  }
   if (d.w !== undefined) return showWord(+d.w);
-  if (d.note !== undefined) return showNote(+d.note);
   if (d.lex) return showLex(d.lex);
   if (d.conc) return showConc(d.conc);
-  if (d.go) { const [b, c, v] = d.go.split(".").map(Number); sheetStack = []; return go(b, c, v); }
+  if (d.go) { const [b, c, v] = d.go.split(".").map(Number); return go(b, c, v); }
+  if (d.q) { sheetStack = []; hideSheet(); $("#quick").value = d.q; return quickSearch(d.q); }
   if (d.pickb) return showPicker(+d.pickb);
   if (d.pickc) { const [b, c] = d.pickc.split(".").map(Number); return go(b, c); }
+  if (d.ntab) return showNotes(d.ntab);
   if (d.cf) {
     concState.filter = d.cf;
     document.querySelectorAll("[data-cf]").forEach(x => x.setAttribute("aria-pressed", String(x === t)));
@@ -538,28 +769,32 @@ document.addEventListener("click", async e => {
   if (d.savenote) return saveNote(+d.savenote);
   if (d.delnote) return delNote(+d.delnote);
   if (d.addword !== undefined) {
-    const { w, v } = state.words[+d.addword];
-    const lang = isOT(state.b) ? "H" : "G";
+    const { w, b, c, v } = state.words[+d.addword];
+    const lang = isOT(b) ? "H" : "G";
     const [lex, morph] = await Promise.all([loadLex(lang), loadMorph()]);
     const L = lex[w[3]];
-    const mtxt = (w[4] || "").split("/").map(c => (morph[c] || []).map(r => r[1]).join(" ")).filter(Boolean).join(" + ");
-    const line = `- ${w[0]} (${w[1]}) · ${L ? L[0] + " " : ""}${w[3]} · ${L ? L[3] : w[2]}${mtxt ? " · " + mtxt : ""}`;
-    return showNote(v, line);
-  }
-  if (d.view) {
-    state.view = d.view; store.set("view", d.view);
-    document.querySelectorAll("[data-view]").forEach(x => x.setAttribute("aria-pressed", String(x === t)));
-    $("#reader").className = `view-${state.view}${state.gloss ? " show-gloss" : ""}`;
-    return;
+    const mtxt = (w[4] || "").split("/").map(code => (morph[code] || []).map(r => r[1]).join(" ")).filter(Boolean).join(" + ");
+    return showNote(refKey(b, c, v), `- ${w[0]} (${w[1]}) · ${L ? L[0] + " " : ""}${w[3]} · ${L ? L[3] : w[2]}${mtxt ? " · " + mtxt : ""}`);
   }
   switch (d.act || t.id) {
     case "prev": return step(-1);
     case "next": return step(1);
     case "loc": return showPicker();
-    case "btnSearch": return showSearch();
+    case "btnTop": window.scrollTo({ top: 0 }); return $("#quick").focus();
     case "btnNotes": return showNotes();
+    case "btnTheme": state.theme = state.theme === "dark" ? "light" : "dark"; store.set("theme", state.theme); document.documentElement.dataset.theme = state.theme; return;
     case "btnSettings": case "settings": return showSettings();
     case "sheetClose": return closeSheet();
+    case "quickHelp": return showHelp();
+    case "rangeGo": return rangeSearch();
+    case "resetBtn": speechSynthesis?.cancel?.(); $("#kw").value = ""; $("#quick").value = ""; return showChapter(state.b, state.c);
+    case "fsDown": case "fsUp": state.fs = Math.min(30, Math.max(14, state.fs + (t.id === "fsUp" ? 1 : -1))); store.set("fs", state.fs); return applyFs();
+    case "allOrig": case "allEn": case "glossBtn": {
+      const k = { allOrig: "allOrig", allEn: "allEn", glossBtn: "gloss" }[t.id];
+      state[k] = !state[k]; store.set(k, state[k]); t.setAttribute("aria-pressed", String(state[k]));
+      return drawList();
+    }
+    case "showmarks": { sheetStack = []; hideSheet(); const list = [...state.marks].sort((a, b) => a - b).map(fromKey); return showList(list, "북마크"); }
     case "moredef": { const el = $("#def"); if (el) { el.classList.toggle("open"); t.textContent = el.classList.contains("open") ? "접기" : "전체 보기"; } return; }
     case "concmore": return drawConc(false);
     case "export": return exportNotes();
@@ -568,31 +803,40 @@ document.addEventListener("click", async e => {
     case "delkor": {
       if (t.dataset.confirm !== "1") { t.dataset.confirm = "1"; t.textContent = "한 번 더 누르면 지웁니다"; return; }
       await idb.clear("kor"); await idb.del("meta", "kor"); korCache.clear(); state.hasKor = false;
-      toast("한글 본문을 지웠습니다"); sheetStack = []; closeSheet(); return render();
+      toast("한글 본문을 지웠습니다"); sheetStack = []; closeSheet(); return showChapter(state.b, state.c);
     }
   }
 });
 $("#scrim").addEventListener("click", () => { sheetStack = []; closeSheet(); });
 document.addEventListener("keydown", e => { if (e.key === "Escape" && !$("#sheet").hidden) closeSheet(); });
-document.addEventListener("submit", e => { if (e.target.id === "searchForm") { e.preventDefault(); runSearch($("#q").value); } });
-document.addEventListener("change", e => { if (e.target.id === "bdbFile" && e.target.files[0]) importBdb(e.target.files[0]); });
+$("#quickForm").addEventListener("submit", e => { e.preventDefault(); $("#quick").blur(); quickSearch($("#quick").value); });
+$("#kw").addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); rangeSearch(); } });
+document.addEventListener("change", e => {
+  const id = e.target.id;
+  if (id === "bdbFile" && e.target.files[0]) return importBdb(e.target.files[0]);
+  // 책을 바꾸면 장·절은 비움(책 전체), 장을 바꾸면 절은 비움(장 전체)
+  if (id === "b1" || id === "c1") return fillCV($("#b1"), $("#c1"), $("#v1"), id === "b1" ? 0 : +$("#c1").value, 0);
+  if (id === "b2" || id === "c2") return fillCV($("#b2"), $("#c2"), $("#v2"), id === "b2" ? 0 : +$("#c2").value, 0);
+  if (id === "ttsRate") store.set("ttsRate", +e.target.value);
+});
 document.addEventListener("input", e => {
   if (e.target.id === "fs") { state.fs = +e.target.value; store.set("fs", state.fs); applyFs(); $("#fsv").textContent = state.fs + "px"; }
 });
-$("#glossToggle").addEventListener("change", e => { state.gloss = e.target.checked; store.set("gloss", state.gloss); $("#reader").classList.toggle("show-gloss", state.gloss); });
-// 휴대폰 뒤로 가기 버튼으로 시트 닫기
 window.addEventListener("popstate", () => { if (!$("#sheet").hidden) { sheetStack = []; hideSheet(); } });
 function applyFs() { document.documentElement.style.setProperty("--fs", state.fs + "px"); }
 
 // ---------- 시작 ----------
 (async function start() {
+  document.documentElement.dataset.theme = state.theme;
   const m = location.hash.match(/^#(\d+)-(\d+)$/);
   if (m && +m[1] >= 1 && +m[1] <= 66) { state.b = +m[1]; state.c = +m[2]; }
   if (state.c > BOOKS[state.b-1][2]) state.c = 1;
   applyFs();
-  $("#glossToggle").checked = state.gloss;
-  document.querySelectorAll("[data-view]").forEach(x => x.setAttribute("aria-pressed", String(x.dataset.view === state.view)));
+  $("#allOrig").setAttribute("aria-pressed", String(state.allOrig));
+  $("#allEn").setAttribute("aria-pressed", String(state.allEn));
+  $("#glossBtn").setAttribute("aria-pressed", String(state.gloss));
   try { state.hasKor = !!(await idb.get("meta", "kor")); await loadNotes(); } catch (e) { console.warn(e); }
-  render();
+  await showChapter(state.b, state.c);
+  window.scrollTo(0, 0);
   if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
 })();

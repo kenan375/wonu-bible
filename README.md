@@ -15,4 +15,8 @@ https://github.com/STEPBible/STEPBible-Data
 
 앱용 JSON으로 바꾸면서 형식을 바꾸고 문법 설명을 한국어로 옮겼습니다.
 
+관주(약 43만 개, 추천 수 순): **OpenBible.info** Cross References, [CC BY](https://creativecommons.org/licenses/by/4.0/) (scrollmapper/bible_databases 경유).
+
+영어 성경: **KJV** (퍼블릭 도메인).
+
 SQLite 읽기: [sql.js](https://github.com/sql-js/sql.js) (MIT).
