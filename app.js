@@ -852,12 +852,18 @@ async function saveOffline() {
   prog.hidden = false;
   const files = ["data/names.json", "data/nidx.json", "data/gko.json", "data/vlem.json", "data/vcount.json", "data/morph.json", "data/lex/H.json", "data/lex/G.json", "data/conc/H.json", "data/conc/G.json"];
   for (let b = 1; b <= 66; b++) for (const dir of ["books", "en", "xref", ...(b <= 39 ? ["lxx"] : [])]) files.push(`data/${dir}/${String(b).padStart(2, "0")}.json`);
-  let done = 0, fail = 0;
-  for (const f of files) {
-    try { const r = await fetch(f); if (!r.ok) fail++; await r.arrayBuffer(); } catch { fail++; }
-    done++; bar.style.width = (done / files.length * 100) + "%"; msg.textContent = `${done} / ${files.length}`;
+  const failed = [];
+  let done = 0;
+  // 4개씩 나눠 받고, 실패한 것은 한 번 더 시도
+  const get = async f => { for (let t = 0; t < 2; t++) { try { const r = await fetch(f, { cache: "no-cache" }); if (r.ok) { await r.arrayBuffer(); return true; } } catch {} } return false; };
+  for (let i = 0; i < files.length; i += 4) {
+    const part = files.slice(i, i + 4);
+    const ok = await Promise.all(part.map(get));
+    part.forEach((f, j) => { if (!ok[j]) failed.push(f); });
+    done += part.length; bar.style.width = (done / files.length * 100) + "%"; msg.textContent = `${done} / ${files.length}`;
   }
-  msg.textContent = fail ? `${fail}개를 받지 못했습니다. 다시 눌러 주세요.` : "모두 저장했습니다. 이제 인터넷 없이 쓸 수 있습니다.";
+  store.set("offlineAt", failed.length ? 0 : Date.now());
+  msg.textContent = failed.length ? `${failed.length}개를 받지 못했습니다: ${failed.map(f => f.replace("data/", "")).join(", ")} — 와이파이를 확인하고 다시 눌러 주세요.` : "모두 저장했습니다. 이제 인터넷 없이 쓸 수 있습니다.";
 }
 
 
