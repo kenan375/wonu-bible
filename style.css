@@ -231,3 +231,17 @@ textarea{min-height:9em;resize:vertical;width:100%;font-family:var(--f-ko);line-
 .pad-kateta .vtext{font-size:calc(var(--fs) * .9)}
 .vtools{gap:6px}
 .vt{min-width:34px;padding:0 6px}
+
+/* 맥락 검색 */
+.qbtn.ctx{background:var(--he);border-color:var(--he);color:var(--bg)}
+.ctx-box{display:block;background:var(--surface);border-radius:10px;padding:10px 12px;line-height:1.7;color:var(--ink)}
+.ctx-box b{color:var(--accent);margin-right:4px}
+.ctx-box .he{font-family:var(--f-he);color:var(--he)}
+.ctx-box .gr{font-family:var(--f-gr);color:var(--gr)}
+.ctx-box small{color:var(--muted)}
+.why{display:flex;flex-wrap:wrap;gap:4px;margin-top:6px;font-family:var(--f-ui)}
+.why i{font-style:normal;font-size:.68rem;color:var(--muted);border:1px solid var(--line);border-radius:999px;padding:0 8px;line-height:1.7}
+.ctrl{grid-template-columns:minmax(0,1fr)}
+.range{grid-template-columns:2.6em minmax(0,1fr) 4.2em 4.2em}
+@media (max-width:380px){.range{grid-template-columns:2.4em minmax(0,1fr) 3.8em 3.8em}}
+.qbtn.ctx{padding:0 8px}

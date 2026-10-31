@@ -122,7 +122,7 @@ async function drawList(scrollKey) {
   reader.className = (state.gloss ? "show-gloss " : "") + "pad-" + state.pad;
   state.words = [];
   const list = state.list;
-  const multiBook = new Set(list.map(r => r[0])).size > 1;
+  const multiBook = state.mode !== "ctx" && new Set(list.map(r => r[0])).size > 1;
   const books = [...new Set(list.map(r => r[0]))];
   const xrefs = {};
   await Promise.all(books.map(async b => { try { xrefs[b] = await loadXref(b); } catch { xrefs[b] = null; } }));
@@ -146,7 +146,7 @@ async function drawList(scrollKey) {
     const ot = isOT(b);
     const prefix = multiBook || state.mode !== "chapter" ? `${BOOKS[b-1][1]} ${c}:${v}` : `${c}:${v}`;
     h += `<article class="verse" id="r${key}" data-k="${key}">
-      <div class="vrow"><div class="vtext">${title ? `<span class="ps-title">${esc(title)}</span>` : ""}<span class="vref">${prefix}</span>${th}</div>
+      <div class="vrow"><div class="vtext">${title ? `<span class="ps-title">${esc(title)}</span>` : ""}<span class="vref">${prefix}</span>${th}${state.reasons && state.reasons.get(key) ? `<span class="why">${state.reasons.get(key).slice(0, 4).map(r => `<i>${esc(r)}</i>`).join("")}</span>` : ""}</div>
       <div class="vside"><span class="vnum">${v}</span><button class="enbtn" type="button" data-tool="en" data-k="${key}" aria-pressed="false" aria-label="영어 성경">EN</button></div></div>
       <div class="vtools">
         <button class="vt ${ot ? "he" : "gr"}" type="button" data-tool="orig" data-k="${key}" aria-pressed="false" aria-label="원어">${ot ? "א" : "α"}</button>
@@ -182,7 +182,7 @@ async function drawList(scrollKey) {
 
 async function showChapter(b, c, v) {
   state.b = b; state.c = Math.min(Math.max(1, c), BOOKS[b-1][2]);
-  state.mode = "chapter"; state.terms = [];
+  state.mode = "chapter"; state.terms = []; state.reasons = null;
   store.set("b", state.b); store.set("c", state.c);
   try { history.replaceState(history.state, "", `#${state.b}-${state.c}`); } catch {}
   $("#locText").textContent = `${BOOKS[state.b-1][0]} ${state.c}`;
@@ -454,7 +454,7 @@ async function filterByTerms(list, terms, mode) {
 }
 const LIMIT = 3000;
 async function showList(list, label, terms, andor) {
-  state.terms = terms || [];
+  state.terms = terms || []; state.reasons = null;
   let info = "";
   if (state.terms.length) {
     const { list: f, hits } = await filterByTerms(list, state.terms, andor || "or");
@@ -719,7 +719,7 @@ async function importBdb(file) {
 async function saveOffline() {
   const msg = $("#offMsg"), prog = $("#offProg"), bar = prog.querySelector("span");
   prog.hidden = false;
-  const files = ["data/vcount.json", "data/morph.json", "data/lex/H.json", "data/lex/G.json", "data/conc/H.json", "data/conc/G.json"];
+  const files = ["data/vlem.json", "data/vcount.json", "data/morph.json", "data/lex/H.json", "data/lex/G.json", "data/conc/H.json", "data/conc/G.json"];
   for (let b = 1; b <= 66; b++) for (const dir of ["books", "en", "xref", ...(b <= 39 ? ["lxx"] : [])]) files.push(`data/${dir}/${String(b).padStart(2, "0")}.json`);
   let done = 0, fail = 0;
   for (const f of files) {
@@ -837,6 +837,151 @@ async function katetaHTML(b, c, v) {
   } catch {
     return v === 1 ? `<p class="small">주석을 불러오지 못했습니다. 인터넷 연결을 확인해 주세요.</p>` : "";
   }
+}
+
+
+// ---------- 맥락 검색 ----------
+// 1) 문장에서 핵심어를 뽑고(조사·어미 떼기, 비슷한 말 더하기)
+// 2) 핵심어가 들어 있는 구절(씨앗)을 찾은 뒤
+// 3) 그 구절들의 원어 단어 가운데 두드러진 것(맥락 개념)을 고르고
+// 4) 같은 원어 개념이 쓰인 구절 + 씨앗 구절의 관주까지 모아 점수순으로 보여 준다.
+const CTX_STOP = new Set("나 나는 내가 내 저 저는 제가 제 우리 우리는 너 너는 당신 그 그는 이 저것 이것 그것 것 수 때 등 및 또 더 좀 잘 안 못 왜 어떻게 무엇 무슨 누구 누가 어디 언제 어떤 어느 정말 너무 많이 많은 아주 매우 다 모든 하나 요즘 요새 최근 오늘 늘 항상 자꾸 계속 성경 구절 말씀 찾아 찾아줘 알려 알려줘 관한 관련 대한 대해 대해서 있다 있는 없다 없는 하다 되다 같다 싶다 사람들".split(" "));
+const CTX_END = ["하였습니다", "했습니다", "합니다", "입니다", "하는가", "하는지", "하는데", "인가요", "인가", "일까", "할까", "하는", "하다", "한다", "스러운", "스럽다", "되는", "된다", "적인", "한", "된", "할", "했다", "하고", "하며", "해요", "해서", "하게", "하지", "하면", "에게서", "에게", "께서", "으로", "에서", "까지", "부터", "처럼", "보다", "이란", "이라", "이다", "였다", "었다", "았다", "스럽", "들이", "들을", "들은", "들의", "들", "을", "를", "이", "가", "은", "는", "의", "에", "와", "과", "도", "로", "만", "요", "다", "고", "며", "게", "지", "니", "냐"];
+const CTX_SYN = {
+  힘들: ["수고", "곤고", "괴로", "고난", "무거운"], 힘든: ["수고", "곤고", "괴로", "고난"], 지치: ["피곤", "곤비", "쉬"], 피곤: ["곤비", "쉬"],
+  걱정: ["염려", "근심"], 불안: ["염려", "두려", "근심"], 두렵: ["두려", "무서"], 두려: ["두려", "무서"], 무섭: ["두려", "무서"],
+  외롭: ["외로", "홀로", "버리"], 외로: ["홀로", "버리"], 슬프: ["슬퍼", "애통", "눈물", "울"], 슬픔: ["슬퍼", "애통", "눈물"], 우울: ["낙심", "근심", "슬퍼"],
+  화나: ["분노", "노하", "성내"], 화: ["분노", "노하", "성내"], 분노: ["노하", "성내", "진노"], 용서: ["사하", "용서", "사함"],
+  돈: ["재물", "돈", "은", "부요"], 부자: ["부요", "부자", "재물"], 가난: ["가난", "궁핍", "빈궁"], 재물: ["재물", "부요"],
+  아내: ["아내", "여자"], 남편: ["남편", "지아비"], 부부: ["남편", "아내", "장가", "시집"], 결혼: ["장가", "시집", "혼인"],
+  자녀: ["자녀", "자식", "아들"], 아이: ["아이", "자식", "어린"], 자식: ["자녀", "아들"], 부모: ["부모", "아비", "어미", "공경"],
+  죽음: ["죽", "사망"], 죽: ["사망"], 병: ["병", "질병", "고치", "낫"], 아프: ["병", "고치", "낫", "고통"], 아픔: ["고통", "상처"],
+  감사: ["감사", "찬송"], 기쁨: ["기뻐", "즐거"], 기쁘: ["기뻐", "즐거"], 행복: ["복", "즐거", "기뻐"], 평안: ["평강", "평안", "화평"], 평화: ["평강", "화평"],
+  교만: ["교만", "거만", "높이"], 겸손: ["겸손", "낮추"], 믿음: ["믿음", "믿"], 소망: ["소망", "바라"], 희망: ["소망", "바라"],
+  사랑: ["사랑", "인애", "긍휼"], 기도: ["기도", "구하", "부르짖"], 유혹: ["시험", "유혹", "꾀"], 정치: ["권세", "다스리", "통치", "권력"],
+  직장: ["수고", "일", "품꾼", "삯"], 일: ["수고", "일하", "노동"], 친구: ["친구", "벗", "이웃"], 원수: ["원수", "대적"], 전쟁: ["전쟁", "싸움"],
+  창조: ["창조", "지으", "만드"], 위로: ["위로", "안위"], 죄: ["죄", "악", "허물"], 구원: ["구원", "건지", "속량"], 천국: ["천국", "하늘", "영생"],
+  가정: ["집", "가족", "아내", "남편", "자녀"], 나라: ["나라", "민족"], 지혜: ["지혜", "명철"], 순종: ["순종", "청종", "지키"], 거짓: ["거짓", "속이"]
+};
+function ctxTokens(q) {
+  const out = [];
+  for (let w of q.replace(/[^가-힣a-zA-Z0-9\s]/g, " ").split(/\s+/).filter(Boolean)) {
+    if (CTX_STOP.has(w)) continue;
+    let s = w;
+    for (let k = 0; k < 3 && !CTX_SYN[s]; k++) {
+      // 남는 말이 두 글자 이상일 때만 떼어 낸다 (힘들다 → 힘들, 사람들 → 사람)
+      const e = CTX_END.find(e => s.endsWith(e) && (s.length - e.length >= 2 || (s.length - e.length === 1 && CTX_SYN[s.slice(0, -e.length)])));
+      if (!e) break;
+      s = s.slice(0, -e.length);
+    }
+    if (CTX_STOP.has(s) || (!s.length)) continue;
+    if (s.length === 1 && !CTX_SYN[s]) continue;
+    if (!out.some(t => t.stem === s)) out.push({ word: w, stem: s, syn: CTX_SYN[s] || CTX_SYN[w] || [] });
+  }
+  return out;
+}
+const reEsc = t => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+async function ctxSearch(q) {
+  q = q.trim(); if (!q) return;
+  if (!state.hasKor) return toast("맥락 검색은 개역개정을 불러온 뒤에 쓸 수 있습니다");
+  if (/^\d?\s?[가-힣]+\s*\d+(:\d+)?$/.test(q)) return toast("장절은 빠른 검색에 넣어 주세요");
+  const toks = ctxTokens(q);
+  if (!toks.length) return toast("핵심어를 찾지 못했습니다. 명사나 진술형 문장으로 써 보세요");
+  $("#info").innerHTML = "맥락을 찾는 중…";
+  try { const hist = store.get("chist", []).filter(x => x !== q); hist.unshift(q); store.set("chist", hist.slice(0, 20)); } catch {}
+
+  // 모든 절의 한글 본문
+  const verses = [];
+  for (let b = 1; b <= 66; b++) {
+    const k = await loadKor(b); if (!k) continue;
+    for (const c in k) for (const v in k[c]) verses.push([refKey(b, +c, +v), k[c][v].x]);
+  }
+  const N = verses.length;
+  // 핵심어마다 (원래 말 1.0, 비슷한 말 0.6) 정규식과 희소성
+  const terms = [];
+  for (const t of toks) {
+    terms.push({ tok: t, s: t.stem, w: 1 });
+    for (const s of t.syn) if (s !== t.stem) terms.push({ tok: t, s, w: 0.6 });
+  }
+  for (const t of terms) {
+    t.re = new RegExp("(^|[\\s\"'(“‘])" + reEsc(t.s));
+    t.df = 0;
+  }
+  const hitsBy = new Map(), vlen = new Map();
+  for (const [key, x] of verses) {
+    let row = null;
+    for (const t of terms) if (t.re.test(x)) { t.df++; (row ||= []).push(t); }
+    if (row) { hitsBy.set(key, row); vlen.set(key, x.length); }
+  }
+  for (const t of terms) t.idf = Math.log((N + 1) / (t.df + 1));
+  const textScore = new Map();
+  for (const [key, row] of hitsBy) {
+    const per = new Map(); // 핵심어별 가장 높은 값
+    for (const t of row) per.set(t.tok, Math.max(per.get(t.tok) || 0, t.w * t.idf));
+    let s = 0; for (const v of per.values()) s += v;
+    s *= 1 + 0.5 * (per.size - 1); // 여러 핵심어가 함께 있으면 가산
+    if (row.some(t => t.w === 1)) s *= 1.15; // 검색한 말이 그대로 나오면 조금 더
+    s *= 1 + 0.15 * Math.min(row.length, 4); // 여러 번 나오면 조금 더
+    s /= 1 + vlen.get(key) / 160; // 긴 구절은 조금 덜
+    textScore.set(key, s);
+  }
+  if (!textScore.size) { $("#info").textContent = "이 핵심어가 들어 있는 구절을 찾지 못했습니다."; return; }
+  const maxT = Math.max(...textScore.values());
+  const seeds = [...textScore.entries()].sort((a, b) => b[1] - a[1]).slice(0, 40);
+
+  // 맥락 개념: 씨앗 구절들에 두드러지게 나오는 원어 단어
+  const [vlem, concH, concG, lexH, lexG] = await Promise.all([getJSON("data/vlem.json"), loadConc("H"), loadConc("G"), loadLex("H"), loadLex("G")]);
+  const conc = s => (s[0] === "H" ? concH : concG)[s] || [];
+  const lemOf = key => { const [b, c, v] = fromKey(key); return (vlem[b] && vlem[b][c] && vlem[b][c][v]) || []; };
+  const cw = new Map(), cn = new Map();
+  for (const [key, s] of seeds) for (const L of lemOf(key)) { cw.set(L, (cw.get(L) || 0) + s / maxT); cn.set(L, (cn.get(L) || 0) + 1); }
+  const concepts = [...cw.entries()].map(([L, w]) => {
+    const df = conc(L).length;
+    return [L, df >= 3 && df <= 1500 && cn.get(L) >= Math.min(3, Math.ceil(seeds.length / 4)) ? w * Math.log(N / df) : 0];
+  }).filter(x => x[1] > 0).sort((a, b) => b[1] - a[1]).slice(0, 6);
+  const maxC = concepts.length ? concepts[0][1] : 1;
+
+  // 후보 모으기
+  const score = new Map(), why = new Map();
+  const add = (key, s, reason) => { score.set(key, (score.get(key) || 0) + s); if (reason) { const r = why.get(key) || new Set(); r.add(reason); why.set(key, r); } };
+  for (const [key, s] of textScore) add(key, s / maxT, "단어");
+  for (const [L, w] of concepts) {
+    const lx = (L[0] === "H" ? lexH : lexG)[L];
+    const label = lx ? lx[0] : L;
+    for (const key of conc(L)) add(key, 0.55 * (w / maxC), label);
+  }
+  const top = seeds.slice(0, 15);
+  for (let i = 0; i < top.length; i++) {
+    const [key, s] = top[i]; const [b, c, v] = fromKey(key);
+    let refs = [];
+    try { const x = await loadXref(b); refs = (x[c] && x[c][v]) || []; } catch {}
+    refs.slice(0, 15).forEach(([tb, tc, tv], r) => add(refKey(tb, tc, tv), 0.5 * (s / maxT) / (1 + r / 4), "관주 " + refStr(b, c, v)));
+  }
+  const ranked = [...score.entries()].sort((a, b) => b[1] - a[1]).slice(0, 60);
+
+  // 화면
+  state.mode = "ctx"; state.pad = state.pad === "plan" ? "home" : state.pad;
+  state.list = ranked.map(([k]) => fromKey(k));
+  state.terms = [...new Set(terms.filter(t => t.df).map(t => t.s))];
+  state.reasons = new Map(ranked.map(([k]) => [k, [...(why.get(k) || [])]]));
+  const lab = concepts.slice(0, 4).map(([L]) => { const lx = (L[0] === "H" ? lexH : lexG)[L]; return lx ? `<span class="${L[0] === "H" ? "he" : "gr"}">${esc(lx[0])}</span> ${esc(lx[3])}` : esc(L); });
+  const seedTxt = verses.find(v => v[0] === ranked[0][0]);
+  $("#locText").textContent = "맥락 검색";
+  $("#info").innerHTML = `<span class="ctx-box"><b>핵심어</b> ${toks.map(t => esc(t.stem) + (t.syn.length ? `<small> (+${esc(t.syn.slice(0, 3).join(", "))})</small>` : "")).join(" · ")}<br>
+    ${lab.length ? `<b>맥락 개념</b> ${lab.join(" · ")}<br>` : ""}<b>대표 구절</b> ${esc(refStr(...fromKey(ranked[0][0])))} “${esc((seedTxt ? seedTxt[1] : "").slice(0, 60))}…”<br>
+    <small>${ranked.length}절 · 점수순 · 단어가 없어도 원어 개념과 관주로 이어진 구절을 함께 보여 줍니다</small></span>`;
+  await drawList();
+  $("#reader").scrollIntoView({ block: "start" });
+}
+function ctxHelp() {
+  const hist = store.get("chist", []);
+  openSheet("맥락 검색 쓰는 법", `<dl class="kv help">
+    <dt>잘 됨</dt><dd>명사·진술형 문장 — “남편을 사랑한다”, “나는 요즘 힘들다”, “교만”</dd>
+    <dt>보통</dt><dd>질문형 — “교만한 사람은 누구인가”</dd>
+    <dt>안 됨</dt><dd>장절 — “창 5:6” (빠른 검색을 쓰세요)</dd></dl>
+    <p class="hint">핵심어가 들어 있는 구절을 먼저 찾고, 그 구절들에 공통으로 쓰인 히브리어·헬라어 단어(맥락 개념)와 관주를 따라 관련 구절을 더 찾아옵니다. 그래서 검색어가 직접 들어 있지 않은 구절도 나옵니다. 결과의 해석은 읽는 사람의 몫입니다.</p>
+    ${hist.length ? `<h3 class="small">최근 맥락 검색</h3><div class="chips">${hist.map(x => `<button class="chip" type="button" data-cq="${esc(x)}">${esc(x)}</button>`).join("")}</div>` : ""}`);
 }
 
 // ---------- 한국어 약식 분해 (예: 동사-칼-완-3남단, 명사.여단여) ----------
@@ -1052,6 +1197,7 @@ document.addEventListener("click", async e => {
     return togglePanel(art, d.tool, key);
   }
   if (d.w !== undefined) return showWord(+d.w);
+  if (d.cq) { sheetStack = []; hideSheet(); $("#ctxq").value = d.cq; return ctxSearch(d.cq); }
   if (d.comm) {
     store.set("comm", d.comm);
     if (d.scope === "panel") { const art = t.closest(".verse"); const box = t.closest(".panel"); box.remove(); return togglePanel(art, "comm", +art.dataset.k, true); }
@@ -1105,6 +1251,7 @@ document.addEventListener("click", async e => {
     case "ttsStop": ttsQueue = []; speechSynthesis.cancel(); ttsPaused = false; document.querySelectorAll(".verse.hl").forEach(e => e.classList.remove("hl")); return;
     case "sheetClose": return closeSheet();
     case "quickHelp": return showHelp();
+    case "ctxHelp": return ctxHelp();
     case "rangeGo": return rangeSearch();
     case "resetBtn": speechSynthesis?.cancel?.(); $("#kw").value = ""; $("#quick").value = ""; return showChapter(state.b, state.c);
     case "fsDown": case "fsUp": state.fs = Math.min(30, Math.max(14, state.fs + (t.id === "fsUp" ? 1 : -1))); store.set("fs", state.fs); return applyFs();
@@ -1130,6 +1277,7 @@ document.addEventListener("click", async e => {
 $("#scrim").addEventListener("click", () => { sheetStack = []; closeSheet(); });
 document.addEventListener("keydown", e => { if (e.key === "Escape" && !$("#sheet").hidden) closeSheet(); });
 $("#quickForm").addEventListener("submit", e => { e.preventDefault(); $("#quick").blur(); quickSearch($("#quick").value); });
+$("#ctxForm").addEventListener("submit", e => { e.preventDefault(); $("#ctxq").blur(); ctxSearch($("#ctxq").value); });
 $("#kw").addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); rangeSearch(); } });
 document.addEventListener("change", e => {
   const id = e.target.id;
