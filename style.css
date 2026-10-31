@@ -216,3 +216,18 @@ textarea{min-height:9em;resize:vertical;width:100%;font-family:var(--f-ko);line-
 .pday.done .pchk{border-color:var(--xr)}
 .pdate{font-size:.82rem;color:var(--muted);font-variant-numeric:tabular-nums}
 .pread{border:0;background:none;text-align:left;font-size:1rem;cursor:pointer;padding:6px 0}
+
+/* 카테타(주석) */
+.vt.cm{color:var(--accent);font-weight:700;font-size:.9rem}
+.kateta-top{padding:6px 0 10px;display:grid;gap:6px}
+.kateta{margin-top:10px;display:grid;gap:10px}
+.comm{background:var(--surface);border-radius:10px;padding:10px 12px;display:grid;gap:6px}
+.panel .comm{background:var(--bg)}
+.comm-src{margin:0;font-size:.75rem;letter-spacing:.04em;color:var(--accent);font-weight:700}
+.comm-text{white-space:pre-wrap;font-family:var(--f-gr);font-size:calc(var(--fs) * .78);line-height:1.6;overflow-wrap:anywhere}
+.comm-text.clip{max-height:11em;overflow:hidden;-webkit-mask-image:linear-gradient(#000 70%,transparent);mask-image:linear-gradient(#000 70%,transparent)}
+.comm .row a{font-size:.88rem}
+.comm-chips .chip{font-size:.82rem;padding:3px 10px}
+.pad-kateta .vtext{font-size:calc(var(--fs) * .9)}
+.vtools{gap:6px}
+.vt{min-width:34px;padding:0 6px}

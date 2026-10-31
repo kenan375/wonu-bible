@@ -131,6 +131,7 @@ async function drawList(scrollKey) {
   if (!state.hasKor) h += `<div class="notice"><b>개역개정 본문이 아직 없습니다.</b><span>설정(☰)에서 갖고 계신 성경 파일(.bdb)을 한 번 불러오면 한글 본문이 나옵니다. 파일은 이 휴대폰 안에만 저장됩니다. 그 전에는 영어(KJV)로 보여 드립니다.</span><div><button class="btn" type="button" data-act="settings">파일 불러오기</button></div></div>`;
   if (state.mode === "chapter") h += `<div class="headband"><span>${esc(BOOKS[state.b-1][0])} ${state.c}장</span><span>#</span></div>`;
   else h += `<div class="headband"><span>${list.length}절</span><span>#</span></div>`;
+  if (state.pad === "kateta") h += `<div class="kateta-top">${commChips(curComm(), "pad")}<p class="small">영어 주석은 인터넷에서 불러옵니다(무료 공개 자료). 한 번 본 장은 휴대폰에 저장됩니다.</p></div>`;
   h += `<div class="list-wrap">`;
   let lastBook = 0;
   for (const [b, c, v] of list) {
@@ -151,6 +152,7 @@ async function drawList(scrollKey) {
         <button class="vt ${ot ? "he" : "gr"}" type="button" data-tool="orig" data-k="${key}" aria-pressed="false" aria-label="원어">${ot ? "א" : "α"}</button>
         ${ot ? `<button class="vt lx" type="button" data-tool="lxx" data-k="${key}" aria-pressed="false" aria-label="70인역">Λ</button>` : ""}
         <button class="vt xr" type="button" data-tool="xref" data-k="${key}" aria-pressed="false" aria-label="관주">🔗<small>${xn || ""}</small></button>
+        <button class="vt cm" type="button" data-tool="comm" data-k="${key}" aria-pressed="false" aria-label="주석">주</button>
         <button class="vt nt${state.notes.has(key) ? " has" : ""}" type="button" data-tool="note" data-k="${key}" aria-label="노트">✎</button>
         <button class="vt nt${state.marks.has(key) ? " has" : ""}" type="button" data-tool="mark" data-k="${key}" aria-label="북마크">⚑</button>
         <button class="vt cp" type="button" data-tool="tts" data-k="${key}" aria-label="읽어주기">▶</button>
@@ -158,6 +160,7 @@ async function drawList(scrollKey) {
       </div>
       ${state.pad === "inter" ? `<div class="inter">${await interHTML(b, c, v)}</div>` : ""}
       ${state.pad === "copy" ? copyHTML(key, text) : ""}
+      ${state.pad === "kateta" ? `<div class="kateta">${await katetaHTML(b, c, v)}</div>` : ""}
       <div class="panels"></div></article>`;
   }
   h += `</div>`;
@@ -230,6 +233,8 @@ async function togglePanel(article, tool, key, forceOpen) {
       }
       div.innerHTML = h + `</div>`;
     }
+  } else if (tool === "comm") {
+    div.innerHTML = await commPanelHTML(b, c, v);
   } else if (tool === "lxx") {
     let lx = null;
     try { const L = await loadLxx(b); lx = L[c] && L[c][v]; } catch {}
@@ -728,16 +733,16 @@ async function saveOffline() {
 // ---------- 패드(메뉴) ----------
 const PADS = {
   home: ["본문", "Basic Pad"], inter: ["인터리니어 패드", "Interlinear Pad"], tts: ["TTS 패드", "TTS Pad"],
-  copy: ["필사 패드", "Copy Pad"], plan: ["연간 읽기표", "Reading Plan"]
+  copy: ["필사 패드", "Copy Pad"], plan: ["연간 읽기표", "Reading Plan"], kateta: ["카테타 패드", "Kateta Pad"]
 };
 const loadLxx = b => getJSON(`data/lxx/${String(b).padStart(2, "0")}.json`);
 
 function showMenu() {
-  const items = [["home", "⌂", "본문 (홈)"], ["inter", "≡", "인터리니어 패드"], ["tts", "♪", "TTS 패드"], ["copy", "✍", "필사 패드"],
+  const items = [["home", "⌂", "본문 (홈)"], ["inter", "≡", "인터리니어 패드"], ["tts", "♪", "TTS 패드"], ["copy", "✍", "필사 패드"], ["kateta", "❝", "카테타 패드 (주석)"],
     ["plan", "▦", "연간 읽기표"], ["notes", "✎", "묵상 노트"], ["marks", "⚑", "저장 목록 (북마크)"]];
   const h = `<nav class="menu">${items.map(([k, i, n]) => `<button type="button" class="${state.pad === k ? "cur" : ""}" data-pad="${k}"><span class="mi">${i}</span>${n}</button>`).join("")}
     <hr><button type="button" data-act="settings"><span class="mi">⚙</span>설정</button></nav>
-    <p class="small">원어: STEPBible.org · 70인역: Swete (First1KGreek) · 관주: OpenBible.info · 영어: KJV</p>`;
+    <p class="small">원어: STEPBible.org · 70인역: Swete (First1KGreek) · 관주: OpenBible.info · 영어: KJV · 주석: Free Use Bible API</p>`;
   openSheet("원어서재", h, { side: true });
 }
 function setPad(p) {
@@ -747,6 +752,91 @@ function setPad(p) {
   $("#ttsBar").hidden = p !== "tts";
   if (p === "plan") return showPlan();
   drawList();
+}
+
+
+// ---------- 카테타 패드 (영어 주석, Free Use Bible API에서 온라인으로 불러옴) ----------
+const COMMS = [
+  ["john-gill", "존 길", "Gill"], ["john-calvin", "칼빈", "Calvin"], ["matthew-henry", "매튜 헨리", "Henry"],
+  ["adam-clarke", "아담 클라크", "Clarke"], ["jamieson-fausset-brown", "JFB", "JFB"], ["keil-delitzsch", "카일-델리취 (구약)", "K&D"]
+];
+const USFM = "GEN EXO LEV NUM DEU JOS JDG RUT 1SA 2SA 1KI 2KI 1CH 2CH EZR NEH EST JOB PSA PRO ECC SNG ISA JER LAM EZK DAN HOS JOL AMO OBA JON MIC NAM HAB ZEP HAG ZEC MAL MAT MRK LUK JHN ACT ROM 1CO 2CO GAL EPH PHP COL 1TH 2TH 1TI 2TI TIT PHM HEB JAS 1PE 2PE 1JN 2JN 3JN JUD REV".split(" ");
+const commCache = new Map();
+const curComm = () => store.get("comm", "john-gill");
+
+// 주석 본문 조각(문자열, {text}, {content:[...]}, 줄바꿈 등)을 글자로 이어 붙인다
+function flat(x) {
+  if (x == null) return "";
+  if (typeof x === "string") return x;
+  if (Array.isArray(x)) return x.map(flat).join("");
+  if (x.lineBreak || x.type === "line_break") return "\n";
+  if (typeof x.text === "string") return x.text;
+  if (x.content) return flat(x.content);
+  if (x.heading) return flat(x.heading) + "\n";
+  return "";
+}
+// 한 장의 주석을 {절: 글} 로 만든다. 실패하면 오류를 던진다.
+async function loadComm(id, b, c) {
+  const key = `${id}/${b}/${c}`;
+  if (commCache.has(key)) return commCache.get(key);
+  const p = (async () => {
+    const r = await fetch(`https://bible.helloao.org/api/c/${id}/${USFM[b-1]}/${c}.json`);
+    if (r.status === 404) return { none: true };
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    const j = await r.json();
+    const out = { intro: flat(j.chapter && j.chapter.introduction).trim(), v: {} };
+    let last = 0;
+    for (const item of (j.chapter && j.chapter.content) || []) {
+      if (item.type === "verse") { last = +item.number; out.v[last] = (out.v[last] ? out.v[last] + "\n\n" : "") + flat(item.content).trim(); }
+      else if (last && item.type !== "heading") out.v[last] += "\n" + flat(item.content || item).trim();
+    }
+    return out;
+  })();
+  commCache.set(key, p);
+  try { return await p; } catch (e) { commCache.delete(key); throw e; }
+}
+// 이 절에 해당하는 주석 (주석이 여러 절을 묶어 앞 절에 달려 있으면 그 절을 찾아 올라간다)
+function commFor(ch, v) {
+  if (ch.v[v]) return { from: v, text: ch.v[v] };
+  for (let x = v - 1; x >= 1 && x >= v - 6; x--) if (ch.v[x]) return { from: x, text: ch.v[x], shared: true };
+  return null;
+}
+function commChips(sel, scope) {
+  return `<div class="chips comm-chips" role="group" aria-label="주석 선택">${COMMS.map(([id, ko]) =>
+    `<button class="chip" type="button" data-comm="${id}" data-scope="${scope}" aria-pressed="${id === sel}">${esc(ko)}</button>`).join("")}</div>`;
+}
+const gtrans = t => `https://translate.google.com/?sl=en&tl=ko&op=translate&text=${encodeURIComponent(t.slice(0, 4500))}`;
+function commBlock(name, ref, text, shared) {
+  const long = text.length > 700;
+  return `<div class="comm"><p class="comm-src">${esc(name)} · ${esc(ref)}${shared ? " (앞 절과 묶인 주석)" : ""}</p>
+    <div class="comm-text${long ? " clip" : ""}">${esc(text)}</div>
+    <div class="row">${long ? `<button class="linklike" type="button" data-act="commmore">전체 보기</button>` : ""}
+    <a class="linklike" href="${gtrans(text)}" target="_blank" rel="noopener">한국어로 번역 (구글)</a></div></div>`;
+}
+// 절 아래 패널
+async function commPanelHTML(b, c, v) {
+  const id = curComm(), name = COMMS.find(x => x[0] === id)[1];
+  let h = `<h4>카테타 · 영어 주석</h4>${commChips(id, "panel")}`;
+  try {
+    const ch = await loadComm(id, b, c);
+    const hit = !ch.none && commFor(ch, v);
+    h += hit ? commBlock(name, `${BOOKS[b-1][1]} ${c}:${hit.from}`, hit.text, hit.shared) : `<p class="small">${esc(name)} 주석에는 이 절(또는 이 책)에 대한 내용이 없습니다. 다른 주석을 골라 보세요.</p>`;
+  } catch {
+    h += `<p class="small">주석은 인터넷에서 불러옵니다. 연결을 확인한 뒤 다시 눌러 주세요. 한 번 본 장은 이 휴대폰에 저장되어 인터넷 없이도 보입니다.</p>`;
+  }
+  return h;
+}
+// 카테타 패드: 절마다 주석을 이어서 보여준다
+async function katetaHTML(b, c, v) {
+  const id = curComm(), name = COMMS.find(x => x[0] === id)[1];
+  try {
+    const ch = await loadComm(id, b, c);
+    if (ch.none) return v === 1 ? `<p class="small">${esc(name)} 주석은 ${esc(BOOKS[b-1][0])}을(를) 다루지 않습니다.</p>` : "";
+    const intro = v === 1 && ch.intro ? commBlock(name, `${BOOKS[b-1][1]} ${c}장 서론`, ch.intro) : "";
+    return intro + (ch.v[v] ? commBlock(name, `${BOOKS[b-1][1]} ${c}:${v}`, ch.v[v]) : "");
+  } catch {
+    return v === 1 ? `<p class="small">주석을 불러오지 못했습니다. 인터넷 연결을 확인해 주세요.</p>` : "";
+  }
 }
 
 // ---------- 한국어 약식 분해 (예: 동사-칼-완-3남단, 명사.여단여) ----------
@@ -962,6 +1052,11 @@ document.addEventListener("click", async e => {
     return togglePanel(art, d.tool, key);
   }
   if (d.w !== undefined) return showWord(+d.w);
+  if (d.comm) {
+    store.set("comm", d.comm);
+    if (d.scope === "panel") { const art = t.closest(".verse"); const box = t.closest(".panel"); box.remove(); return togglePanel(art, "comm", +art.dataset.k, true); }
+    return drawList();
+  }
   if (d.pad) {
     sheetStack = []; hideSheet();
     if (d.pad === "notes") return showNotes("notes");
@@ -1021,6 +1116,7 @@ document.addEventListener("click", async e => {
     case "showmarks": { sheetStack = []; hideSheet(); const list = [...state.marks].sort((a, b) => a - b).map(fromKey); return showList(list, "북마크"); }
     case "moredef": { const el = $("#def"); if (el) { el.classList.toggle("open"); t.textContent = el.classList.contains("open") ? "접기" : "전체 보기"; } return; }
     case "concmore": return drawConc(false);
+    case "commmore": { const el = t.closest(".comm").querySelector(".comm-text"); el.classList.toggle("clip"); t.textContent = el.classList.contains("clip") ? "전체 보기" : "접기"; return; }
     case "export": return exportNotes();
     case "copymd": return copyMarkdown();
     case "offline": return saveOffline();
