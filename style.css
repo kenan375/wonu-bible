@@ -256,3 +256,8 @@ textarea{min-height:9em;resize:vertical;width:100%;font-family:var(--f-ko);line-
 .ko-g{color:var(--xr)}
 .ib .ig{color:var(--ink);font-weight:600;opacity:.85}
 .lemma .small{font-size:.78rem}
+
+/* 본문 연구 노트 */
+.vt.st{color:var(--xr);font-size:.8rem;font-weight:700}
+.hb-btn{border:1px solid var(--accent);background:none;color:var(--accent);border-radius:999px;padding:1px 10px;font-size:.8rem;cursor:pointer}
+.md-prev{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:12px;font-size:.82rem;line-height:1.55;font-family:ui-monospace,Consolas,"Noto Sans KR",monospace;max-width:100%;overflow-x:auto}

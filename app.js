@@ -179,7 +179,7 @@ const KOR = (() => {
         if (a === "υ" && b === "ι") { units.push({ c: "w" }, { v: "i" }); i += 2; continue; } // 휘오스
         if (a === "α" && b === "υ") { units.push({ v: "a" }, { v: "u" }); i += 2; continue; }
         if (a === "γ" && "γκξχ".includes(b || "")) { units.push({ c: "ng" }); i++; continue; }
-        if (a === b && "πτκσρ".includes(a)) { i++; continue; } // 겹자음은 하나로 (λλ μμ νν은 받침으로: 알렐루이아, 요안네스)
+        if (a === b && ("πτκσρ".includes(a) || !"αεηιουω".includes(s[i + 2] || ""))) { i++; continue; } // 겹자음은 하나로 (λλ μμ νν은 받침으로: 알렐루이아, 요안네스)
         const m = GM[a];
         if (!m) { i++; continue; }
         if ("aeioü".includes(m)) units.push({ v: m }); else units.push({ c: m });
@@ -253,7 +253,7 @@ async function drawList(scrollKey) {
   let h = "";
   if (!state.hasKor) h += `<div class="notice"><b>개역개정 본문이 아직 없습니다.</b><span>설정(☰)에서 갖고 계신 성경 파일(.bdb)을 한 번 불러오면 한글 본문이 나옵니다. 파일은 이 휴대폰 안에만 저장됩니다. 그 전에는 영어(KJV)로 보여 드립니다.</span><div><button class="btn" type="button" data-act="settings">파일 불러오기</button></div></div>`;
   if (state.mode === "chapter") h += `<div class="headband"><span>${esc(BOOKS[state.b-1][0])} ${state.c}장</span><span>#</span></div>`;
-  else h += `<div class="headband"><span>${list.length}절</span><span>#</span></div>`;
+  else h += `<div class="headband"><span>${list.length}절</span>${list.length >= 2 && list.length <= 15 ? `<button class="hb-btn" type="button" data-act="studyList">이 구간 연구 노트</button>` : "<span>#</span>"}</div>`;
   if (state.pad === "kateta") h += `<div class="kateta-top">${commChips(curComm(), "pad")}<p class="small">영어 주석은 인터넷에서 불러옵니다(무료 공개 자료). 한 번 본 장은 휴대폰에 저장됩니다.</p></div>`;
   h += `<div class="list-wrap">`;
   let lastBook = 0;
@@ -280,6 +280,7 @@ async function drawList(scrollKey) {
         <button class="vt nt${state.marks.has(key) ? " has" : ""}" type="button" data-tool="mark" data-k="${key}" aria-label="북마크">⚑</button>
         <button class="vt cp" type="button" data-tool="tts" data-k="${key}" aria-label="읽어주기">▶</button>
         <button class="vt cp" type="button" data-tool="copy" data-k="${key}" aria-label="복사">#</button>
+        <button class="vt st" type="button" data-tool="study" data-k="${key}" aria-label="본문 연구 노트">연구</button>
       </div>
       ${state.pad === "inter" ? `<div class="inter">${await interHTML(b, c, v)}</div>` : ""}
       ${state.pad === "copy" ? copyHTML(key, text) : ""}
@@ -1107,6 +1108,117 @@ function ctxHelp() {
     ${hist.length ? `<h3 class="small">최근 맥락 검색</h3><div class="chips">${hist.map(x => `<button class="chip" type="button" data-cq="${esc(x)}">${esc(x)}</button>`).join("")}</div>` : ""}`);
 }
 
+
+// ---------- 본문 연구 한 장 요약 (말씀서재용 마크다운) ----------
+const pad2 = n => String(n).padStart(2, "0");
+const today = () => { const d = new Date(); return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`; };
+function refRange(keys) {
+  const [b1, c1, v1] = fromKey(keys[0]), [b2, c2, v2] = fromKey(keys[keys.length - 1]);
+  if (keys.length === 1) return refStr(b1, c1, v1);
+  if (b1 === b2 && c1 === c2) return `${BOOKS[b1-1][1]} ${c1}:${v1}-${v2}`;
+  if (b1 === b2) return `${BOOKS[b1-1][1]} ${c1}:${v1}-${c2}:${v2}`;
+  return `${refStr(b1, c1, v1)} - ${refStr(b2, c2, v2)}`;
+}
+async function buildStudy(keys) {
+  keys = [...keys].sort((a, b) => a - b).slice(0, 15);
+  const [b0] = fromKey(keys[0]);
+  const lang = isOT(b0) ? "H" : "G";
+  const [lex, morph, conc, vlem] = await Promise.all([loadLex(lang), loadMorph(), loadConc(lang).catch(() => ({})), getJSON("data/vlem.json").catch(() => ({}))]);
+  const ref = refRange(keys);
+  let md = `---\n본문: ${ref}\n날짜: ${today()}\n도구: 원어서재\n용도: 설교 / 중등부 공과 / 개인 묵상\n태그: [원어연구, 말씀서재]\n---\n\n# ${ref} 원어 연구\n`;
+  // 본문
+  md += `\n## 1. 본문\n`;
+  const origLines = [], counts = new Map(), firstWord = new Map();
+  for (const key of keys) {
+    const [b, c, v] = fromKey(key);
+    const k = await korText(b, c, v);
+    let en = ""; try { en = (await loadEn(b))[c][v] || ""; } catch {}
+    md += `\n> **${c}:${v}** ${k ? k.x : en}\n`;
+    let ws = null; try { ws = (await loadBook(b))[c][v]; } catch {}
+    if (ws) {
+      origLines.push(`- **${c}:${v}** ${ws.map(w => w[0].replace(/[\\]/g, "")).join(" ")}\n  - ${ws.map(w => korOf(w, b)).join(" ")}`);
+      const content = new Set((vlem[b] && vlem[b][c] && vlem[b][c][v]) || []);
+      for (const w of ws) if (content.has(w[3])) { counts.set(w[3], (counts.get(w[3]) || 0) + 1); if (!firstWord.has(w[3])) firstWord.set(w[3], { w, b, c, v }); }
+    }
+  }
+  if (origLines.length) md += `\n## 2. 원문과 한글 발음 (${lang === "H" ? "히브리어 WLC" : "헬라어 NA28"})\n\n${origLines.join("\n")}\n`;
+  // 핵심 단어: 본문 안에서 반복된 말 → 성경 전체에서 드문 말 순
+  // 본문 안 반복 + 성경 전체에서 적당히 쓰이는 말(뜻을 실어 나르는 말)을 앞에, 너무 흔한 말은 뒤로
+  const wscore = ([s, n]) => { const df = (conc[s] || []).length || 1; return n * 1.5 - Math.abs(Math.log(df) - Math.log(120)) * 0.6 - (df > 1200 ? 3 : 0); };
+  const order = [...firstWord.keys()];
+  const words = [...counts.entries()].sort((a, b) => wscore(b) - wscore(a)).filter(([s]) => ((conc[s] || []).length || 1) <= 1200).slice(0, 20)
+    .sort((a, b) => order.indexOf(a[0]) - order.indexOf(b[0]));
+  if (words.length) {
+    md += `\n## 3. 핵심 단어\n\n| 원어 | 한글 발음 | 뜻 | 사전형 | 문법 | 스트롱 | 성경 전체 |\n|---|---|---|---|---|---|---|\n`;
+    for (const [s, n] of words) {
+      const { w, b } = firstWord.get(s); const L = lex[s];
+      const parse = (kparse(w[4], morph) || w[4]).replace(/ \| /g, " + ");
+      md += `| ${w[0].replace(/[\\|]/g, "")} | ${korOf(w, b)} | ${koOr(koWord(w, b), w[2])} | ${L ? L[0] + " (" + (lang === "H" ? KOR.heb(L[1]) : KOR.grk(L[0])) + ")" : ""} | ${parse} | ${s} | ${(conc[s] || []).length}절${n > 1 ? ` · 본문 ${n}회` : ""} |\n`;
+    }
+    md += `\n> 사전 풀이(영어)\n`;
+    for (const [s] of words.slice(0, 5)) { const L = lex[s]; if (L) md += `> - **${L[0]}** ${s}: ${L[4].split("\n")[0].slice(0, 160)}\n`; }
+  }
+  // 70인역
+  if (lang === "H") {
+    const lines = [];
+    for (const key of keys) {
+      const [b, c, v] = fromKey(key);
+      try { const lx = (await loadLxx(b))[c][v]; if (lx) lines.push(`- **${c}:${v}** ${lx.map(x => x[0]).join(" ")}\n  - ${lx.map(x => KOR.grk(x[0])).join(" ")}`); } catch {}
+    }
+    md += `\n## 4. 70인역 연결 (Swete)\n\n${lines.length ? lines.join("\n") : "- 이 본문은 70인역과 연결되지 않았습니다."}\n- 히브리어 → 헬라어 대응: \n- 신약에서 쓰인 곳: \n`;
+  }
+  // 관주
+  const xr = [];
+  for (const key of keys) {
+    const [b, c, v] = fromKey(key);
+    try { for (const r of ((await loadXref(b))[c] || {})[v] || []) if (!keys.includes(refKey(r[0], r[1], r[2]))) xr.push(r); } catch {}
+  }
+  const seen = new Set(), top = [];
+  for (const r of xr) { const k = refKey(r[0], r[1], r[2]); if (seen.has(k)) continue; seen.add(k); top.push(r); if (top.length >= 6) break; }
+  md += `\n## ${lang === "H" ? 5 : 4}. 주요 관주\n\n`;
+  for (const [b, c, v, ve] of top) {
+    const k = await korText(b, c, v);
+    md += `- **${BOOKS[b-1][1]} ${c}:${v}${ve ? "-" + ve : ""}** ${k ? k.x : ""}\n`;
+  }
+  // 주석
+  const n0 = lang === "H" ? 6 : 5;
+  md += `\n## ${n0}. 주석 점검\n\n`;
+  try {
+    const id = curComm(), name = COMMS.find(x => x[0] === id)[1];
+    const [b, c, v] = fromKey(keys[0]);
+    const ch = await loadComm(id, b, c);
+    const hit = !ch.none && commFor(ch, v);
+    md += hit ? `- **${name}** (${BOOKS[b-1][1]} ${c}:${hit.from}) ${hit.text.replace(/\s+/g, " ").slice(0, 600)}${hit.text.length > 600 ? "…" : ""}\n` : `- ${name}: 이 본문 주석 없음\n`;
+  } catch { md += `- (인터넷 연결 시 주석이 들어갑니다)\n`; }
+  md += `- 내 해석과 다른 점: \n`;
+  // 노트
+  const mine = keys.map(k => state.notes.get(k) && `- **${refStr(...fromKey(k))}** ${state.notes.get(k).text.replace(/\n/g, "\n  ")}`).filter(Boolean);
+  if (mine.length) md += `\n## ${n0 + 1}. 내 노트\n\n${mine.join("\n")}\n`;
+  md += `\n## ${n0 + (mine.length ? 2 : 1)}. 묵상과 적용\n\n- 한 문장 요약: \n- 성인: \n- 중등부: \n- 유학생(쉬운 한국어): \n`;
+  md += `\n---\n원어: STEPBible.org (CC BY 4.0) · 70인역: Swete (CC BY-SA 4.0) · 관주: OpenBible.info · 주석: Free Use Bible API\n`;
+  return { md, name: `${ref.replace(/[:\s]/g, (m) => m === ":" ? "_" : " ")} 원어연구.md` };
+}
+async function showStudy(keys) {
+  openSheet("본문 연구 노트", `<p class="small">만드는 중…</p>`, { full: true });
+  const { md, name } = await buildStudy(keys);
+  state.studyMd = { md, name };
+  $("#sheetTitle").textContent = name.replace(/\.md$/, "");
+  $("#sheetBody").innerHTML = `<div class="actions"><button class="btn" type="button" data-act="studyShare">말씀서재로 보내기 (.md)</button><button class="btn ghost" type="button" data-act="studyCopy">마크다운 복사</button></div>
+    <p class="hint">옵시디언 말씀서재 폴더에 저장하거나, 복사해서 새 노트에 붙여넣으세요. 빈 칸(대응어·적용)은 직접 채우시면 됩니다.</p>
+    <pre class="md-prev">${esc(md)}</pre>`;
+}
+async function shareFile(md, name) {
+  const file = new File([md], name, { type: "text/markdown" });
+  if (navigator.canShare && navigator.canShare({ files: [file] })) {
+    try { await navigator.share({ files: [file], title: name }); return; } catch (e) { if (e.name === "AbortError") return; }
+  }
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(file); a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+  toast("다운로드 폴더에 저장했습니다");
+}
+
 // ---------- 한국어 약식 분해 (예: 동사-칼-완-3남단, 명사.여단여) ----------
 const SHORT = [
   [/^칼/, "칼"], [/^니팔/, "닢"], [/^피엘/, "피"], [/^푸알/, "푸"], [/^히필/, "힢"], [/^호팔/, "홒"], [/^히트파엘/, "힡"],
@@ -1311,6 +1423,7 @@ document.addEventListener("click", async e => {
     if (d.tool === "note") return showNote(key);
     if (d.tool === "mark") return toggleMark(key);
     if (d.tool === "tts") return speakKeys(state.list.map(r => refKey(...r)).filter(k => k >= key));
+    if (d.tool === "study") return showStudy([key]);
     if (d.tool === "copy") {
       const [b, c, v] = fromKey(key); const k = await korText(b, c, v);
       let txt = k ? k.x : ""; if (!txt) { try { txt = (await loadEn(b))[c][v]; } catch {} }
@@ -1386,6 +1499,9 @@ document.addEventListener("click", async e => {
     case "showmarks": { sheetStack = []; hideSheet(); const list = [...state.marks].sort((a, b) => a - b).map(fromKey); return showList(list, "북마크"); }
     case "moredef": { const el = $("#def"); if (el) { el.classList.toggle("open"); t.textContent = el.classList.contains("open") ? "접기" : "전체 보기"; } return; }
     case "concmore": return drawConc(false);
+    case "studyList": return showStudy(state.list.map(r => refKey(...r)));
+    case "studyShare": return state.studyMd && shareFile(state.studyMd.md, state.studyMd.name);
+    case "studyCopy": try { await navigator.clipboard.writeText(state.studyMd.md); toast("복사했습니다. 옵시디언에 붙여넣으세요."); } catch { toast("복사가 막혀 있습니다. 보내기를 써 주세요."); } return;
     case "commmore": { const el = t.closest(".comm").querySelector(".comm-text"); el.classList.toggle("clip"); t.textContent = el.classList.contains("clip") ? "전체 보기" : "접기"; return; }
     case "export": return exportNotes();
     case "copymd": return copyMarkdown();
