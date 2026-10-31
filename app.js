@@ -416,7 +416,7 @@ async function showWord(i) {
   const [surf, translit, eng, main, mcode, segs, flag] = w;
   const cls = lang === "H" ? "he" : "gr";
   let h = `<div class="big ${cls}">${esc(surf)}</div>`;
-  h += `<dl class="kv"><dt>한글 발음</dt><dd class="kor">${esc(lang === "H" ? KOR.heb(translit) : KOR.grk(surf)) || "—"}</dd><dt>음역</dt><dd>${esc(translit) || "—"}</dd><dt>뜻</dt><dd class="ko-g">${esc(koWord(w, b)) || "—"}</dd><dt>문맥 번역</dt><dd>${esc(eng) || "—"}</dd><dt>본문</dt><dd>${esc(refStr(b, c, v))}</dd></dl>`;
+  h += `<dl class="kv"><dt>한글 발음</dt><dd class="kor">${esc(lang === "H" ? KOR.heb(translit) : KOR.grk(surf)) || "—"}</dd><dt>음역</dt><dd>${esc(translit) || "—"}</dd><dt>뜻</dt><dd class="ko-g">${esc(koWord(w, b)) || (lex[main] && lex[main][2].startsWith("N:") ? "고유명사(이름)" : "—")}</dd><dt>문맥 번역</dt><dd>${esc(eng) || "—"}</dd><dt>본문</dt><dd>${esc(refStr(b, c, v))}</dd></dl>`;
   if (flag === 2) h += `<p class="hint">이 단어는 NA28 비평본문에는 없고 공인본문(TR)에만 있는 이형입니다.</p>`;
   if (lang === "H" && segs.length > 1) {
     h += `<div class="card"><h3>단어 분해</h3><div class="segs">`;
@@ -432,6 +432,8 @@ async function showWord(i) {
     });
     h += `</div>`;
   }
+  const segStrongs = [main, ...(segs || []).map(x => x[1])].filter(Boolean);
+  if (segStrongs.some(x => (lex[x] && lex[x][2].startsWith("N:")))) h += await nameCardFor(segStrongs, refKey(b, c, v));
   h += lexCard(lex, main, lang, conc);
   h += `<div class="actions"><button class="btn" type="button" data-conc="${esc(main)}">용례 ${(conc[main] || []).length}곳 보기</button><button class="btn ghost" type="button" data-addword="${i}">노트에 담기</button></div>`;
   openSheet(`${refStr(b, c, v)} · ${surf}`, h);
@@ -845,7 +847,7 @@ async function importBdb(file) {
 async function saveOffline() {
   const msg = $("#offMsg"), prog = $("#offProg"), bar = prog.querySelector("span");
   prog.hidden = false;
-  const files = ["data/gko.json", "data/vlem.json", "data/vcount.json", "data/morph.json", "data/lex/H.json", "data/lex/G.json", "data/conc/H.json", "data/conc/G.json"];
+  const files = ["data/names.json", "data/nidx.json", "data/gko.json", "data/vlem.json", "data/vcount.json", "data/morph.json", "data/lex/H.json", "data/lex/G.json", "data/conc/H.json", "data/conc/G.json"];
   for (let b = 1; b <= 66; b++) for (const dir of ["books", "en", "xref", ...(b <= 39 ? ["lxx"] : [])]) files.push(`data/${dir}/${String(b).padStart(2, "0")}.json`);
   let done = 0, fail = 0;
   for (const f of files) {
@@ -864,7 +866,7 @@ const PADS = {
 const loadLxx = b => getJSON(`data/lxx/${String(b).padStart(2, "0")}.json`);
 
 function showMenu() {
-  const items = [["home", "⌂", "본문 (홈)"], ["inter", "≡", "인터리니어 패드"], ["tts", "♪", "TTS 패드"], ["copy", "✍", "필사 패드"], ["kateta", "❝", "카테타 패드 (주석)"],
+  const items = [["home", "⌂", "본문 (홈)"], ["inter", "≡", "인터리니어 패드"], ["tts", "♪", "TTS 패드"], ["copy", "✍", "필사 패드"], ["kateta", "❝", "카테타 패드 (주석)"], ["names", "☺", "인물·지명 사전"],
     ["plan", "▦", "연간 읽기표"], ["notes", "✎", "묵상 노트"], ["marks", "⚑", "저장 목록 (북마크)"]];
   const h = `<nav class="menu">${items.map(([k, i, n]) => `<button type="button" class="${state.pad === k ? "cur" : ""}" data-pad="${k}"><span class="mi">${i}</span>${n}</button>`).join("")}
     <hr><button type="button" data-act="settings"><span class="mi">⚙</span>설정</button></nav>
@@ -1268,6 +1270,81 @@ const backupCard = () => `<div class="card"><h3>백업 · 복원</h3>
   <label class="field"><span class="small">백업 파일에서 불러오기 (지금 있는 노트는 지우지 않고 합칩니다)</span><input type="file" id="bkFile" accept=".json,application/json"></label>
   <p class="small" id="bkMsg"></p></div>`;
 
+
+// ---------- 인물·지명 사전 (STEPBible TIPNR, CC BY 4.0) ----------
+let NAMES = null, NIDX = null, NLEX = null;
+async function loadNames() {
+  if (!NAMES) [NAMES, NIDX, NLEX] = await Promise.all([getJSON("data/names.json"), getJSON("data/nidx.json"), Promise.all([loadLex("H"), loadLex("G")]).then(([h, g]) => ({ ...h, ...g }))]);
+}
+const NTYPE = { P: "인물", L: "지명", O: "기타" };
+function nameKo(id) {
+  const e = NAMES[id]; if (!e) return id.split("@")[0];
+  if (e.ko) return e.ko;
+  const g = GKO[e.s]; if (g && /[가-힣]/.test(g) && !g.includes("/")) return g;
+  const L = NLEX[e.s];
+  if (L) return e.s[0] === "H" ? KOR.heb(L[1]) : KOR.grk(L[0]);
+  return e.n.replace(/_/g, " ");
+}
+// 이 절에 나오는 그 이름의 주인공 찾기
+function nameAt(strongs, key) {
+  for (const s of strongs) {
+    const list = NIDX[s]; if (!list) continue;
+    const hit = list.find(([, refs]) => refs.includes(key));
+    if (hit) return hit[0];
+  }
+  for (const s of strongs) if (NIDX[s] && NIDX[s].length === 1) return NIDX[s][0][0];
+  return null;
+}
+async function nameCardFor(strongs, key) {
+  await loadNames();
+  const id = nameAt(strongs, key);
+  if (!id) return "";
+  const e = NAMES[id];
+  return `<div class="card name-card"><h3>${NTYPE[e.t]} 사전</h3>
+    <div class="row"><b class="nm">${esc(nameKo(id))}</b><span class="small">${esc(e.n.replace(/_/g, " "))}</span></div>
+    <p class="nb">${esc(e.kb || e.b || e.d || "")}</p>
+    <div><button class="btn plain" type="button" data-name="${esc(id)}">${NTYPE[e.t]} 자세히 · ${e.r.length}절</button></div></div>`;
+}
+async function showName(id, push = true) {
+  await loadNames();
+  const e = NAMES[id]; if (!e) return toast("항목을 찾지 못했습니다");
+  const chips = (arr) => (arr || []).map(x => `<button class="chip" type="button" data-name="${esc(x)}">${esc(nameKo(x))}</button>`).join("");
+  const fam = [["fa", "부모"], ["sib", "형제자매"], ["sp", "배우자"], ["ch", "자녀"]].filter(([k]) => e[k] && e[k].length);
+  const first = e.r[0];
+  let h = `<div class="row"><span class="strong">${NTYPE[e.t]}</span><b class="nm big2">${esc(nameKo(id))}</b><span class="small">${esc(e.n.replace(/_/g, " "))}</span></div>`;
+  if (e.f && e.f.length) h += `<p class="nm-forms">${e.f.map(f => `<span class="${/[֐-׿]/.test(f) ? "he" : "gr"}">${esc(f)}</span>`).join(" · ")}</p>`;
+  if (e.kb) h += `<p class="nb">${esc(e.kb)}</p>`;
+  else if (e.b || e.d) h += `<p class="nb">${esc(e.b || e.d)}</p>`;
+  if (fam.length || e.tr) {
+    h += `<div class="card"><h3>가족 · 관계</h3><dl class="kv">`;
+    for (const [k, lab] of fam) h += `<dt>${lab}</dt><dd><div class="chips">${chips(e[k])}</div></dd>`;
+    if (e.tr) h += `<dt>지파·민족</dt><dd>${esc(e.tr)}</dd>`;
+    h += `</dl></div>`;
+  }
+  h += `<div class="card"><h3>성경에 나오는 곳 · ${e.r.length}절</h3>
+    ${first ? `<p class="small">처음 나오는 곳: <button class="linklike" type="button" data-go="${fromKey(first).join(".")}">${esc(refStr(...fromKey(first)))}</button></p>` : ""}
+    <div class="actions"><button class="btn" type="button" data-namerefs="${esc(id)}">모든 구절 보기</button>${e.map ? `<a class="btn ghost" href="${esc(e.map)}" target="_blank" rel="noopener">지도에서 보기</a>` : ""}</div></div>`;
+  const en = e.a || e.sh;
+  if (en) h += `<div class="card"><h3>해설 (영어)</h3><div class="def" id="def">${esc(en)}</div>
+    <div class="row"><button class="linklike" type="button" data-act="moredef">전체 보기</button><a class="linklike" href="https://translate.google.com/?sl=en&tl=ko&op=translate&text=${encodeURIComponent(en.slice(0, 4500))}" target="_blank" rel="noopener">한국어로 번역 (구글)</a></div></div>`;
+  h += `<p class="small">자료: STEPBible.org TIPNR (CC BY 4.0)</p>`;
+  openSheet(`${NTYPE[e.t]} · ${nameKo(id)}`, h, { push, full: true });
+}
+async function showNameIndex(q = "", t = "") {
+  await loadNames();
+  const qq = q.trim().toLowerCase();
+  let list = Object.keys(NAMES).filter(id => !t || NAMES[id].t === t);
+  if (qq) list = list.filter(id => nameKo(id).includes(q.trim()) || NAMES[id].n.toLowerCase().includes(qq));
+  list.sort((a, b) => NAMES[b].r.length - NAMES[a].r.length);
+  const total = list.length; list = list.slice(0, 120);
+  const h = `<form id="nameForm" class="qrow"><input type="search" id="nameQ" value="${esc(q)}" placeholder="이름 찾기: 다윗, 벧엘, Bethel" autocomplete="off" enterkeyhint="search"><button class="qbtn go" type="submit">찾기</button></form>
+    <div class="chips"><button class="chip" type="button" data-nt="" aria-pressed="${!t}">전체</button><button class="chip" type="button" data-nt="P" aria-pressed="${t === "P"}">인물</button><button class="chip" type="button" data-nt="L" aria-pressed="${t === "L"}">지명</button></div>
+    <p class="small">${total.toLocaleString()}개${total > 120 ? " · 많이 나오는 순으로 120개" : ""}</p>
+    <div class="list">${list.map(id => { const e = NAMES[id]; return `<button class="item" type="button" data-name="${esc(id)}"><span class="ref">${esc(nameKo(id))} <small class="small">${esc(e.n.replace(/_/g, " "))} · ${NTYPE[e.t]} · ${e.r.length}절</small></span><span class="txt">${esc(e.kb || e.b || e.d || "")}</span></button>`; }).join("")}</div>`;
+  openSheet("인물·지명 사전", h, { full: true });
+  state.nameT = t;
+}
+
 // ---------- 한국어 약식 분해 (예: 동사-칼-완-3남단, 명사.여단여) ----------
 const SHORT = [
   [/^칼/, "칼"], [/^니팔/, "닢"], [/^피엘/, "피"], [/^푸알/, "푸"], [/^히필/, "힢"], [/^호팔/, "홒"], [/^히트파엘/, "힡"],
@@ -1482,6 +1559,9 @@ document.addEventListener("click", async e => {
     return togglePanel(art, d.tool, key);
   }
   if (d.w !== undefined) return showWord(+d.w);
+  if (d.name) return showName(d.name, !$("#sheet").hidden);
+  if (d.namerefs) { const e = NAMES[d.namerefs]; sheetStack = []; hideSheet(); state.pad = state.pad === "plan" ? "home" : state.pad; return showList(e.r.map(fromKey), `${nameKo(d.namerefs)} (${e.r.length}절)`); }
+  if (d.nt !== undefined) return showNameIndex($("#nameQ")?.value || "", d.nt);
   if (d.cq) { sheetStack = []; hideSheet(); $("#ctxq").value = d.cq; return ctxSearch(d.cq); }
   if (d.comm) {
     store.set("comm", d.comm);
@@ -1492,6 +1572,7 @@ document.addEventListener("click", async e => {
     sheetStack = []; hideSheet();
     if (d.pad === "notes") return showNotes("notes");
     if (d.pad === "marks") return showNotes("marks");
+    if (d.pad === "names") return showNameIndex();
     return setPad(d.pad);
   }
   if (d.pchk !== undefined) {
@@ -1566,6 +1647,7 @@ document.addEventListener("click", async e => {
 $("#scrim").addEventListener("click", () => { sheetStack = []; closeSheet(); });
 document.addEventListener("keydown", e => { if (e.key === "Escape" && !$("#sheet").hidden) closeSheet(); });
 $("#quickForm").addEventListener("submit", e => { e.preventDefault(); $("#quick").blur(); quickSearch($("#quick").value); });
+document.addEventListener("submit", e => { if (e.target.id === "nameForm") { e.preventDefault(); showNameIndex($("#nameQ").value, state.nameT || ""); } });
 $("#ctxForm").addEventListener("submit", e => { e.preventDefault(); $("#ctxq").blur(); ctxSearch($("#ctxq").value); });
 $("#kw").addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); rangeSearch(); } });
 document.addEventListener("change", e => {

@@ -23,4 +23,6 @@ https://github.com/STEPBible/STEPBible-Data
 
 영어 주석(카테타 패드): 존 길, 칼빈, 매튜 헨리, 아담 클라크, JFB, 카일-델리취 — 퍼블릭 도메인. 앱이 [Free Use Bible API](https://bible.helloao.org)에서 필요할 때 불러옵니다(저장소에는 포함하지 않음).
 
+인물·지명 사전: STEPBible.org **TIPNR**, CC BY 4.0. 자주 나오는 720개 항목에 한글 이름, 300개에 한국어 짧은 설명을 덧붙였습니다.
+
 SQLite 읽기: [sql.js](https://github.com/sql-js/sql.js) (MIT).

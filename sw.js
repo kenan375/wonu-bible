@@ -1,5 +1,5 @@
 // 원어서재 오프라인 저장소: 앱 화면은 미리 저장하고, 원어 데이터는 처음 받을 때 저장한다
-const VERSION = "v9";
+const VERSION = "v10";
 const SHELL = "wonu-shell-" + VERSION;
 const DATA = "wonu-data-v3"; // 데이터가 바뀌면 숫자를 올린다
 const SHELL_FILES = ["./", "index.html", "style.css", "app.js", "manifest.webmanifest",
