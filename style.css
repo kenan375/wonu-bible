@@ -245,3 +245,10 @@ textarea{min-height:9em;resize:vertical;width:100%;font-family:var(--f-ko);line-
 .range{grid-template-columns:2.6em minmax(0,1fr) 4.2em 4.2em}
 @media (max-width:380px){.range{grid-template-columns:2.4em minmax(0,1fr) 3.8em 3.8em}}
 .qbtn.ctx{padding:0 8px}
+
+/* 한글 발음 */
+.w .kp{display:none;direction:ltr;font-family:var(--f-ui);font-size:.66rem;color:var(--accent);line-height:1.25;text-align:center}
+.show-kor .w .kp{display:block}
+.ib .ikp{font-size:.8rem;color:var(--accent);font-weight:600;direction:ltr;white-space:nowrap}
+.kor{color:var(--accent)}
+.lemma .kor{font-weight:700}

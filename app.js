@@ -85,10 +85,121 @@ async function loadKor(b) {
   return v;
 }
 
+
+// ---------- 원어 한글 발음 (관용 표기에 가깝게, 규칙 변환) ----------
+const KOR = (() => {
+  const L = { g: 0, n: 2, d: 3, l: 5, m: 6, b: 7, s: 9, "": 11, j: 12, ch: 14, k: 15, t: 16, p: 17, h: 18 };
+  // 모음: 기본, y(야), w(와), sh(샤) 꼴
+  const V = { a: [0, 2, 9, 2], e: [5, 7, 15, 7], i: [20, 20, 16, 16], o: [8, 12, 14, 12], u: [13, 17, 13, 17], ü: [16, 17, 16, 17], ㅡ: [18, 18, 18, 18] };
+  const T = { "": 0, k: 1, n: 4, l: 8, m: 16, ng: 21 };
+  const syl = (on, vw, glide = 0, coda = "") => String.fromCharCode(0xAC00 + (L[on] * 21 + V[vw][glide]) * 28 + T[coda]);
+  // 받침 없이 홀로 남는 자음 → "ㅡ" 음절
+  const SOLO = { b: "브", v: "브", g: "그", d: "드", t: "트", k: "크", q: "크", kh: "크", ch: "흐", s: "스", z: "즈", ts: "츠", tz: "츠", sh: "쉬", p: "프", f: "프", ph: "프", r: "르", th: "드", x: "크스", ps: "프스", j: "즈", c: "크" };
+  const ON = { b: "b", v: "b", g: "g", d: "d", h: "h", z: "j", ch: "h", kh: "k", t: "t", k: "k", q: "k", l: "l", m: "m", n: "n", s: "s", p: "p", f: "p", ph: "p", ts: "ch", tz: "ch", r: "l", sh: "s", "'": "", th: "d", x: "k", ps: "p", c: "k" };
+  // 공통: 소리 단위 목록 → 한글
+  function build(units) {
+    const out = []; // {on, vw, glide, coda, solo}
+    let cons = [];
+    const lastOpen = () => out.length && !out[out.length - 1].solo && !out[out.length - 1].coda;
+    const flushPending = (keepLast) => {
+      const list = keepLast ? cons.slice(0, -1) : cons;
+      list.forEach((c, i) => {
+        if (i === 0 && ["m", "n", "l", "ng"].includes(c) && lastOpen()) out[out.length - 1].coda = c;
+        else if (c === "h" || c === "'" ) {}
+        else if (c === "y") out.push({ text: "이", solo: 1 });
+        else if (c === "w") out.push({ text: "우", solo: 1 });
+        else if (c === "ng") out.push({ text: "응", solo: 1 });
+        else if (["m", "n", "l"].includes(c)) out.push({ text: { m: "음", n: "은", l: "을" }[c], solo: 1 });
+        else if (c === "x" && i === 0 && lastOpen()) { out[out.length - 1].coda = "k"; out.push({ text: "스", solo: 1 }); }
+        else out.push({ text: SOLO[c] || "", solo: 1 });
+      });
+    };
+    for (const u of units) {
+      if (u.v) {
+        let glide = 0, on = "";
+        let c = cons[cons.length - 1];
+        if (c === "y" || c === "w") { glide = c === "y" ? 1 : 2; cons.pop(); c = cons[cons.length - 1]; }
+        if (c === "sh" && glide === 0) glide = 3;
+        if (c !== undefined && c !== "y" && c !== "w") { on = c; } else c = undefined;
+        flushPending(c !== undefined);
+        if (on === "l" && lastOpen()) out[out.length - 1].coda = "l"; // 엘로힘, 할렐루야
+        else if (on === "l" && out.length && out[out.length - 1].solo) { // 에크레시아 → 에클레시아
+          const t = out[out.length - 1].text, code = t.charCodeAt(t.length - 1);
+          if ((code - 0xAC00) % 28 === 0) out[out.length - 1].text = t.slice(0, -1) + String.fromCharCode(code + 8);
+        }
+        if (on === "x") { if (lastOpen()) out[out.length - 1].coda = "k"; else out.push({ text: "크", solo: 1 }); on = "s"; }
+        if (on === "ps") { out.push({ text: "프", solo: 1 }); on = "s"; }
+        out.push({ on: on === "" ? "" : ON[on] ?? "", vw: u.v, glide });
+        cons = [];
+      } else cons.push(u.c);
+    }
+    flushPending(false);
+    return out.map(s => s.solo ? s.text : syl(s.on, s.vw, s.glide, s.coda || "")).join("");
+  }
+  // 히브리어: STEP 음역(be.re.Shit) 기준
+  const HD = ["ch", "kh", "sh", "ts", "tz", "ph", "th"];
+  function heb(tr) {
+    if (!tr) return "";
+    return tr.split(/[\s\-·]+/).filter(Boolean).map(w => {
+      w = w.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[\[\]\/]/g, "");
+      w = w.replace(/ai\.?(?=y)/g, "a.").replace(/ei/g, "e");
+      const sylls = w.split(".");
+      const units = [];
+      sylls.forEach((s, si) => {
+        for (let i = 0; i < s.length;) {
+          const two = s.slice(i, i + 2);
+          if (HD.includes(two)) { units.push({ c: two }); i += 2; continue; }
+          const ch = s[i];
+          if ("aeiou".includes(ch)) units.push({ v: ch });
+          else if (/[a-z']/.test(ch)) {
+            // 음절 끝의 h·'(묵음), y(이), w(우)
+            const atEnd = i === s.length - 1;
+            if ((ch === "h" || ch === "'") && atEnd) {}
+            else units.push({ c: ch });
+          }
+          i++;
+        }
+      });
+      return build(units);
+    }).join(" ");
+  }
+  // 헬라어: 헬라어 글자에서 바로
+  const GM = { α: "a", β: "b", γ: "g", δ: "d", ε: "e", ζ: "z", η: "e", θ: "th", ι: "i", κ: "k", λ: "l", μ: "m", ν: "n", ξ: "x", ο: "o", π: "p", ρ: "r", σ: "s", ς: "s", τ: "t", υ: "ü", φ: "ph", χ: "kh", ψ: "ps", ω: "o" };
+  function grk(word) {
+    if (!word) return "";
+    return word.split(/\s+/).filter(Boolean).map(w => {
+      const nfd = w.normalize("NFD").toLowerCase();
+      const rough = /^[^\p{L}]*[αεηιουω]+̔|^[^\p{L}]*ῥ|^[^\p{L}]*ῥ/u.test(nfd) && !/^[^\p{L}]*ρ/u.test(nfd);
+      const s = nfd.replace(/[^α-ως]/g, "");
+      const units = rough ? [{ c: "h" }] : [];
+      for (let i = 0; i < s.length;) {
+        const a = s[i], b = s[i + 1];
+        if (a === "ο" && b === "υ") { units.push({ v: "u" }); i += 2; continue; }
+        if (a === "ε" && b === "υ") { units.push({ c: "y" }, { v: "u" }); i += 2; continue; } // 유앙겔리온
+        if (a === "υ" && b === "ι") { units.push({ c: "w" }, { v: "i" }); i += 2; continue; } // 휘오스
+        if (a === "α" && b === "υ") { units.push({ v: "a" }, { v: "u" }); i += 2; continue; }
+        if (a === "γ" && "γκξχ".includes(b || "")) { units.push({ c: "ng" }); i++; continue; }
+        if (a === b && "πτκσρ".includes(a)) { i++; continue; } // 겹자음은 하나로 (λλ μμ νν은 받침으로: 알렐루이아, 요안네스)
+        const m = GM[a];
+        if (!m) { i++; continue; }
+        if ("aeioü".includes(m)) units.push({ v: m }); else units.push({ c: m });
+        i++;
+      }
+      // 첫 ι 뒤에 모음이 오면 반모음: Ἰησοῦς 예수스, Ἰωάννης 요안네스
+      const f = units[0] && units[0].c === "h" ? 1 : 0;
+      if (units[f] && units[f].v === "i" && units[f + 1] && units[f + 1].v) units[f] = { c: "y" };
+      return build(units);
+    }).join(" ");
+  }
+  return { heb, grk };
+})();
+
+const korOf = (w, b) => isOT(b) ? KOR.heb(w[1]) : KOR.grk(w[0]);
+
 // ---------- 상태 ----------
 const state = {
   b: store.get("b", 1), c: store.get("c", 1),
-  fs: store.get("fs", 20), gloss: store.get("gloss", false),
+  fs: store.get("fs", 20), gloss: store.get("gloss", false), kor: store.get("kor", true),
   allOrig: store.get("allOrig", false), allEn: store.get("allEn", false),
   theme: store.get("theme", "dark"), pad: store.get("pad", "home"),
   hasKor: false, notes: new Map(), marks: new Set(),
@@ -119,7 +230,7 @@ const hlRe = () => state.terms.length ? new RegExp(state.terms.map(t => t.replac
 async function drawList(scrollKey) {
   const reader = $("#reader");
   if (state.pad === "plan") return showPlan();
-  reader.className = (state.gloss ? "show-gloss " : "") + "pad-" + state.pad;
+  reader.className = (state.gloss ? "show-gloss " : "") + (state.kor ? "show-kor " : "") + "pad-" + state.pad;
   state.words = [];
   const list = state.list;
   const multiBook = state.mode !== "ctx" && new Set(list.map(r => r[0])).size > 1;
@@ -229,7 +340,7 @@ async function togglePanel(article, tool, key, forceOpen) {
       for (const w of ws) {
         const i = state.words.push({ w, b, c, v }) - 1;
         const cls = "w" + (w[6] === 2 ? " var" : "") + (w[6] === 1 ? " ttl" : "");
-        h += `<button class="${cls}" type="button" data-w="${i}">${w[6] === 2 ? "[" + esc(w[0]) + "]" : esc(w[0])}<span class="g">${esc(w[2])}</span></button>`;
+        h += `<button class="${cls}" type="button" data-w="${i}">${w[6] === 2 ? "[" + esc(w[0]) + "]" : esc(w[0])}<span class="kp">${esc(korOf(w, b))}</span><span class="g">${esc(w[2])}</span></button>`;
       }
       div.innerHTML = h + `</div>`;
     }
@@ -241,7 +352,7 @@ async function togglePanel(article, tool, key, forceOpen) {
     if (!lx || !lx.length) div.innerHTML = `<p class="small">이 절은 70인역과 연결되지 않았습니다 (장절 배열 차이 또는 자료 없음).</p>`;
     else {
       let h = `<h4>70인역 (Swete) · 단어를 누르세요</h4><div class="vo gr" lang="grc">`;
-      for (const x of lx) { const i = state.words.push({ lxx: x, b, c, v }) - 1; h += `<button class="w${x[1] ? "" : " var"}" type="button" data-w="${i}">${esc(x[0])}</button>`; }
+      for (const x of lx) { const i = state.words.push({ lxx: x, b, c, v }) - 1; h += `<button class="w${x[1] ? "" : " var"}" type="button" data-w="${i}">${esc(x[0])}<span class="kp">${esc(KOR.grk(x[0]))}</span></button>`; }
       div.innerHTML = h + `</div>`;
     }
   } else if (tool === "xref") {
@@ -292,7 +403,7 @@ async function showWord(i) {
   const [surf, translit, eng, main, mcode, segs, flag] = w;
   const cls = lang === "H" ? "he" : "gr";
   let h = `<div class="big ${cls}">${esc(surf)}</div>`;
-  h += `<dl class="kv"><dt>음역</dt><dd>${esc(translit) || "—"}</dd><dt>문맥 번역</dt><dd>${esc(eng) || "—"}</dd><dt>본문</dt><dd>${esc(refStr(b, c, v))}</dd></dl>`;
+  h += `<dl class="kv"><dt>한글 발음</dt><dd class="kor">${esc(lang === "H" ? KOR.heb(translit) : KOR.grk(surf)) || "—"}</dd><dt>음역</dt><dd>${esc(translit) || "—"}</dd><dt>문맥 번역</dt><dd>${esc(eng) || "—"}</dd><dt>본문</dt><dd>${esc(refStr(b, c, v))}</dd></dl>`;
   if (flag === 2) h += `<p class="hint">이 단어는 NA28 비평본문에는 없고 공인본문(TR)에만 있는 이형입니다.</p>`;
   if (lang === "H" && segs.length > 1) {
     h += `<div class="card"><h3>단어 분해</h3><div class="segs">`;
@@ -542,7 +653,7 @@ function lexCard(lex, s, lang, conc) {
   const [lemma, tr, pos, gloss, def, rel, link] = L;
   const cls = lang === "H" ? "he" : "gr";
   let h = `<div class="card"><h3>사전 · ${lang === "H" ? "히브리어" : "헬라어"}</h3>`;
-  h += `<div class="lemma"><span class="${cls}" ${cls === "he" ? 'dir="rtl"' : ""}>${esc(lemma)}</span><span>${esc(tr)}</span><span class="strong">${esc(s)}</span><b>${esc(gloss)}</b></div>`;
+  h += `<div class="lemma"><span class="${cls}" ${cls === "he" ? 'dir="rtl"' : ""}>${esc(lemma)}</span><span class="kor">${esc(lang === "H" ? KOR.heb(tr) : KOR.grk(lemma))}</span><span class="small">${esc(tr)}</span><span class="strong">${esc(s)}</span><b>${esc(gloss)}</b></div>`;
   if (rel && link) h += `<p class="small">${esc(relKo(rel))} <button class="linklike" type="button" data-lex="${esc(link)}">${esc(link)}</button></p>`;
   if (def) {
     const lxx = (def.match(/\[in LXX[^\]]*\]/) || [])[0];
@@ -1030,7 +1141,7 @@ async function interHTML(b, c, v) {
     h += `<div class="ilin ${lang}" ${lang === "he" ? 'dir="rtl"' : ""}>`;
     for (const w of ws) {
       const i = state.words.push({ w, b, c, v }) - 1;
-      h += `<button class="ib${w[6] === 2 ? " var" : ""}" type="button" data-w="${i}"><span class="ig">${esc(w[2])}</span><span class="iw">${esc(w[0])}</span><span class="it">${esc(w[1])}</span><span class="im">${esc(w[4])}</span><span class="ik">${esc(kparse(w[4], morph))}</span></button>`;
+      h += `<button class="ib${w[6] === 2 ? " var" : ""}" type="button" data-w="${i}"><span class="ig">${esc(w[2])}</span><span class="iw">${esc(w[0])}</span><span class="it">${esc(w[1])}</span><span class="ikp">${esc(korOf(w, b))}</span><span class="im">${esc(w[4])}</span><span class="ik">${esc(kparse(w[4], morph))}</span></button>`;
     }
     h += `</div>`;
   } else h += `<p class="small">원문이 연결되지 않은 절입니다.</p>`;
@@ -1042,7 +1153,7 @@ async function interHTML(b, c, v) {
       for (const x of lx) {
         const i = state.words.push({ lxx: x, b, c, v }) - 1;
         const L = x[1] ? lexG[x[1]] : null;
-        h += `<button class="ib" type="button" data-w="${i}"><span class="ig">${esc(L ? L[3] : "")}</span><span class="iw">${esc(x[0])}</span><span class="it">${esc(L ? L[0] : "")}</span><span class="im">${esc(x[2] || "")}</span><span class="ik">${esc(kparse(x[2], morph))}</span></button>`;
+        h += `<button class="ib" type="button" data-w="${i}"><span class="ig">${esc(L ? L[3] : "")}</span><span class="iw">${esc(x[0])}</span><span class="it">${esc(L ? L[0] : "")}</span><span class="ikp">${esc(KOR.grk(x[0]))}</span><span class="im">${esc(x[2] || "")}</span><span class="ik">${esc(kparse(x[2], morph))}</span></button>`;
       }
       h += `</div>`;
     }
@@ -1055,7 +1166,7 @@ async function showLxxWord(i) {
   const { lxx, b, c, v } = state.words[i];
   const [surf, strong, mcode] = lxx;
   const [lexG, morph, concG] = await Promise.all([loadLex("G"), loadMorph(), loadConc("G").catch(() => ({}))]);
-  let h = `<div class="big gr">${esc(surf)}</div><dl class="kv"><dt>본문</dt><dd>${esc(refStr(b, c, v))} (70인역)</dd></dl>`;
+  let h = `<div class="big gr">${esc(surf)}</div><dl class="kv"><dt>한글 발음</dt><dd class="kor">${esc(KOR.grk(surf))}</dd><dt>본문</dt><dd>${esc(refStr(b, c, v))} (70인역)</dd></dl>`;
   if (!strong) {
     h += `<p class="hint">신약에 같은 형태가 없어 분해를 붙이지 못한 단어입니다.</p>`;
   } else {
@@ -1255,8 +1366,8 @@ document.addEventListener("click", async e => {
     case "rangeGo": return rangeSearch();
     case "resetBtn": speechSynthesis?.cancel?.(); $("#kw").value = ""; $("#quick").value = ""; return showChapter(state.b, state.c);
     case "fsDown": case "fsUp": state.fs = Math.min(30, Math.max(14, state.fs + (t.id === "fsUp" ? 1 : -1))); store.set("fs", state.fs); return applyFs();
-    case "allOrig": case "allEn": case "glossBtn": {
-      const k = { allOrig: "allOrig", allEn: "allEn", glossBtn: "gloss" }[t.id];
+    case "allOrig": case "allEn": case "glossBtn": case "korBtn": {
+      const k = { allOrig: "allOrig", allEn: "allEn", glossBtn: "gloss", korBtn: "kor" }[t.id];
       state[k] = !state[k]; store.set(k, state[k]); t.setAttribute("aria-pressed", String(state[k]));
       return drawList();
     }
@@ -1304,6 +1415,7 @@ function applyFs() { document.documentElement.style.setProperty("--fs", state.fs
   $("#allOrig").setAttribute("aria-pressed", String(state.allOrig));
   $("#allEn").setAttribute("aria-pressed", String(state.allEn));
   $("#glossBtn").setAttribute("aria-pressed", String(state.gloss));
+  $("#korBtn").setAttribute("aria-pressed", String(state.kor));
   try { state.hasKor = !!(await idb.get("meta", "kor")); await loadNotes(); } catch (e) { console.warn(e); }
   $("#padName").textContent = (PADS[state.pad] || PADS.home)[1];
   $("#ttsBar").hidden = state.pad !== "tts";
