@@ -37,8 +37,8 @@ function toast(msg) {
 const idb = (() => {
   let dbp;
   const open = () => dbp || (dbp = new Promise((res, rej) => {
-    const r = indexedDB.open("wonu-bible", 1);
-    r.onupgradeneeded = () => { const d = r.result; d.createObjectStore("kor"); d.createObjectStore("notes"); d.createObjectStore("meta"); };
+    const r = indexedDB.open("wonu-bible", 2);
+    r.onupgradeneeded = () => { const d = r.result; for (const n of ["kor", "notes", "meta", "vtext"]) if (!d.objectStoreNames.contains(n)) d.createObjectStore(n); };
     r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error);
   }));
   const tx = async (name, mode, fn) => {
@@ -223,7 +223,43 @@ const state = {
 };
 const loadEn = b => getJSON(`data/en/${String(b).padStart(2, "0")}.json`);
 const loadXref = b => getJSON(`data/xref/${String(b).padStart(2, "0")}.json`);
-const korText = async (b, c, v) => { const k = await loadKor(b); return k && k[c] && k[c][v] ? k[c][v] : null; };
+// ---------- 역본 ----------
+const PUBVERS = [["krv", "개역한글", "한글"], ["kjv", "KJV", "KJV"], ["bsb", "BSB", "BSB"], ["asv", "ASV", "ASV"], ["ylt", "YLT", "YLT"], ["darby", "Darby", "Darby"]];
+let UVERS = [];   // 사용자가 추가한 역본 [{id, name, count, at}]
+let MYNAME = "개역개정";
+const verCache = new Map();
+const wrapPlain = d => { const o = {}; for (const c in d) { o[c] = {}; for (const v in d[c]) o[c][v] = { x: d[c][v] }; } return o; };
+async function loadVer(ver, b) {
+  const ck = ver + ":" + b;
+  if (verCache.has(ck)) return verCache.get(ck);
+  let out = null;
+  try {
+    if (ver === "my") out = await loadKor(b);
+    else if (ver.startsWith("u:")) out = (await idb.get("vtext", ver.slice(2) + ":" + b)) || null;
+    else if (ver === "kjv") out = wrapPlain(await loadEn(b));
+    else out = wrapPlain(await getJSON(`data/ver/${ver}/${String(b).padStart(2, "0")}.json`));
+  } catch { out = null; }
+  verCache.set(ck, out);
+  return out;
+}
+function verName(ver, short) {
+  if (ver === "my") return short ? "개역개정" : MYNAME;
+  if (ver.startsWith("u:")) { const u = UVERS.find(x => x.id === ver.slice(2)); return u ? u.name : "내 역본"; }
+  const p = PUBVERS.find(x => x[0] === ver); return p ? p[short ? 2 : 1] : ver;
+}
+function verList() {
+  return [...(state.hasKor ? [["my", MYNAME]] : []), ...UVERS.map(u => ["u:" + u.id, u.name]), ...PUBVERS.map(p => [p[0], p[1] + (p[0] === "krv" ? " (1961)" : "")])];
+}
+function fillVerSel() {
+  const opts = sel => verList().map(([id, n]) => `<option value="${esc(id)}"${id === sel ? " selected" : ""}>${esc(n)}</option>`).join("");
+  if (!verList().some(([id]) => id === state.ver)) state.ver = state.hasKor ? "my" : "krv";
+  if (!verList().some(([id]) => id === state.cmp)) state.cmp = "kjv";
+  $("#verSel").innerHTML = opts(state.ver); $("#cmpSel").innerHTML = opts(state.cmp);
+  $("#allEn").textContent = verName(state.cmp, true);
+}
+const korText = async (b, c, v) => { const k = await loadVer(state.ver, b); return k && k[c] && k[c][v] ? k[c][v] : null; };
+// 맥락 검색처럼 한국어가 꼭 필요한 곳: 개역개정이 있으면 그것, 없으면 개역한글
+const loadKoBook = b => state.hasKor ? loadKor(b) : loadVer("krv", b);
 
 // 장의 절 수: 한글 → 원어 → 영어 순으로 확인
 async function verseCount(b, c) {
@@ -253,7 +289,8 @@ async function drawList(scrollKey) {
   await Promise.all(books.map(async b => { try { xrefs[b] = await loadXref(b); } catch { xrefs[b] = null; } }));
   const re = hlRe();
   let h = "";
-  if (!state.hasKor) h += `<div class="notice"><b>개역개정 본문이 아직 없습니다.</b><span>설정(☰)에서 갖고 계신 성경 파일(.bdb)을 한 번 불러오면 한글 본문이 나옵니다. 파일은 이 휴대폰 안에만 저장됩니다. 그 전에는 영어(KJV)로 보여 드립니다.</span><div><button class="btn" type="button" data-act="settings">파일 불러오기</button></div></div>`;
+  if (!state.hasKor && !store.get("hideKorNotice", false)) h += `<div class="notice"><b>지금은 개역한글(1961)로 보여 드립니다.</b><span>개역개정 파일(.bdb)이 있으면 설정(☰)에서 한 번 불러오세요. 이 휴대폰 안에만 저장됩니다.</span><div class="row"><button class="btn" type="button" data-act="settings">파일 불러오기</button><button class="btn plain" type="button" data-act="hideKorNotice">닫기</button></div></div>`;
+  if (false) h += `<div class="notice"><b>개역개정 본문이 아직 없습니다.</b><span>설정(☰)에서 갖고 계신 성경 파일(.bdb)을 한 번 불러오면 한글 본문이 나옵니다. 파일은 이 휴대폰 안에만 저장됩니다. 그 전에는 영어(KJV)로 보여 드립니다.</span><div><button class="btn" type="button" data-act="settings">파일 불러오기</button></div></div>`;
   if (state.mode === "chapter") h += `<div class="headband"><span>${esc(BOOKS[state.b-1][0])} ${state.c}장</span><span>#</span></div>`;
   else h += `<div class="headband"><span>${list.length}절</span>${list.length >= 2 && list.length <= 15 ? `<button class="hb-btn" type="button" data-act="studyList">이 구간 연구 노트</button>` : "<span>#</span>"}</div>`;
   if (state.pad === "kateta") h += `<div class="kateta-top">${commChips(curComm(), "pad")}<p class="small">영어 주석은 인터넷에서 불러옵니다(무료 공개 자료). 한 번 본 장은 휴대폰에 저장됩니다.</p></div>`;
@@ -272,7 +309,7 @@ async function drawList(scrollKey) {
     const prefix = multiBook || state.mode !== "chapter" ? `${BOOKS[b-1][1]} ${c}:${v}` : `${c}:${v}`;
     h += `<article class="verse" id="r${key}" data-k="${key}">
       <div class="vrow"><div class="vtext">${title ? `<span class="ps-title">${esc(title)}</span>` : ""}<span class="vref">${prefix}</span>${th}${state.reasons && state.reasons.get(key) ? `<span class="why">${state.reasons.get(key).slice(0, 4).map(r => `<i>${esc(r)}</i>`).join("")}</span>` : ""}</div>
-      <div class="vside"><span class="vnum">${v}</span><button class="enbtn" type="button" data-tool="en" data-k="${key}" aria-pressed="false" aria-label="영어 성경">EN</button></div></div>
+      <div class="vside"><span class="vnum">${v}</span><button class="enbtn" type="button" data-tool="en" data-k="${key}" aria-pressed="false" aria-label="대조 역본">${esc(verName(state.cmp, true)).slice(0, 3)}</button></div></div>
       <div class="vtools">
         <button class="vt ${ot ? "he" : "gr"}" type="button" data-tool="orig" data-k="${key}" aria-pressed="false" aria-label="원어">${ot ? "א" : "α"}</button>
         ${ot ? `<button class="vt lx" type="button" data-tool="lxx" data-k="${key}" aria-pressed="false" aria-label="70인역">Λ</button>` : ""}
@@ -297,7 +334,7 @@ async function drawList(scrollKey) {
     for (const el of reader.querySelectorAll(".verse")) {
       const key = +el.dataset.k;
       if (state.allOrig) await togglePanel(el, "orig", key, true);
-      if (state.allEn && state.hasKor) await togglePanel(el, "en", key, true);
+      if (state.allEn) await togglePanel(el, "en", key, true);
     }
   }
   if (scrollKey) {
@@ -342,9 +379,8 @@ async function togglePanel(article, tool, key, forceOpen) {
   const div = document.createElement("div");
   div.className = "panel"; div.dataset.p = tool;
   if (tool === "en") {
-    let t = "";
-    try { const e = await loadEn(b); t = e[c] && e[c][v] || ""; } catch {}
-    div.innerHTML = `<h4>KJV</h4><div class="en-text">${esc(t) || "영어 본문이 없습니다."}</div>`;
+    const k = await loadVer(state.cmp, b); const t = k && k[c] && k[c][v] ? k[c][v].x : "";
+    div.innerHTML = `<h4>${esc(verName(state.cmp))}</h4><div class="${/^(my|krv|u:)/.test(state.cmp) ? "vk-cmp" : "en-text"}">${esc(t) || "이 역본에는 이 절이 없습니다."}</div>`;
   } else if (tool === "orig") {
     let ws = null;
     try { const o = await loadBook(b); ws = o[c] && o[c][v]; } catch {}
@@ -388,11 +424,9 @@ async function fillXref(listEl, refs, from) {
   for (let i = from; i < to; i++) {
     const [b, c, v, ve] = refs[i];
     let t = "";
-    if (state.hasKor) {
-      const parts = [];
-      for (let x = v; x <= (ve || v) && x < v + 6; x++) { const k = await korText(b, c, x); if (k) parts.push(k.x); }
-      t = parts.join(" ");
-    } else { try { const e = await loadEn(b); t = e[c] && e[c][v] || ""; } catch {} }
+    const parts = [];
+    for (let x = v; x <= (ve || v) && x < v + 6; x++) { const k = await korText(b, c, x); if (k) parts.push(k.x); }
+    t = parts.join(" ");
     const label = `${BOOKS[b-1][1]} ${c}:${v}${ve ? "-" + ve : ""}`;
     h += `<button class="xr-item" type="button" data-go="${b}.${c}.${v}"><span class="ref">${esc(label)}</span><span class="txt">${esc(t)}</span></button>`;
   }
@@ -645,7 +679,6 @@ async function quickSearch(q) {
   if (/^[가-힣\d\s]+$/.test(q) && BOOKS.some(x => x[0] === q.replace(/\s/g, "") || x[1] === q.replace(/\s/g, ""))) return go(bookOf(q), 1);
   // (6) 전체 검색어: 사랑, 믿음
   const terms = q.split(/[,]+/).map(s => s.trim()).filter(Boolean);
-  if (!state.hasKor) toast("한글 본문이 없어 영어(KJV)에서 찾습니다");
   return showList(await collectRange(1, 0, 0, 66, 0, 0), "성경 전체", terms, $("#andor").value);
 }
 async function rangeSearch() {
@@ -711,7 +744,7 @@ async function showConc(s) {
     <button class="chip" type="button" data-cf="book" aria-pressed="false">${esc(BOOKS[state.b-1][0])} ${sameBook}</button>
     <button class="chip" type="button" data-cf="ot" aria-pressed="false">구약</button>
     <button class="chip" type="button" data-cf="nt" aria-pressed="false">신약</button></div>
-    ${state.hasKor ? "" : `<p class="hint">개역개정을 불러오면 구절 본문이 함께 보입니다.</p>`}
+
     <div class="list" id="concList"></div><div id="concMore"></div>`;
   openSheet(`용례 · ${L ? L[0] : s}`, h, { push: true, full: true });
   drawConc(true);
@@ -733,7 +766,7 @@ async function drawConc(reset) {
     const [b, c, v] = fromKey(refs[i]);
     if (b !== lastBook) { h += `<p class="group-h">${esc(BOOKS[b-1][0])}</p>`; lastBook = b; }
     let txt = "";
-    if (state.hasKor) { const k = await loadKor(b); txt = k && k[c] && k[c][v] ? k[c][v].x : ""; }
+    { const k = await korText(b, c, v); txt = k ? k.x : ""; }
     h += `<button class="item" type="button" data-go="${b}.${c}.${v}"><span class="ref">${esc(refStr(b, c, v))}</span>${txt ? `<span class="txt">${esc(txt)}</span>` : ""}</button>`;
   }
   list.insertAdjacentHTML("beforeend", h);
@@ -1069,7 +1102,7 @@ const reEsc = t => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 async function ctxSearch(q) {
   q = q.trim(); if (!q) return;
-  if (!state.hasKor) return toast("맥락 검색은 개역개정을 불러온 뒤에 쓸 수 있습니다");
+
   if (/^\d?\s?[가-힣]+\s*\d+(:\d+)?$/.test(q)) return toast("장절은 빠른 검색에 넣어 주세요");
   const toks = ctxTokens(q);
   if (!toks.length) return toast("핵심어를 찾지 못했습니다. 명사나 진술형 문장으로 써 보세요");
@@ -1079,7 +1112,7 @@ async function ctxSearch(q) {
   // 모든 절의 한글 본문
   const verses = [];
   for (let b = 1; b <= 66; b++) {
-    const k = await loadKor(b); if (!k) continue;
+    const k = await loadKoBook(b); if (!k) continue;
     for (const c in k) for (const v in k[c]) verses.push([refKey(b, +c, +v), k[c][v].x]);
   }
   const N = verses.length;
