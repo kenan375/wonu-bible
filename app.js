@@ -613,6 +613,7 @@ function parseOne(s) {
 }
 async function quickSearch(q) {
   q = q.trim(); if (!q) return;
+  if (/^[HGhg]\s*\d{1,4}[A-Za-z]?$/.test(q) || /[\u0590-\u05FF\u0370-\u03FF\u1F00-\u1FFF]/.test(q)) return showOSearch(q);
   try { const hist = store.get("qhist", []).filter(x => x !== q); hist.unshift(q); store.set("qhist", hist.slice(0, 20)); } catch {}
   // (7) 여러 절: 창 15:1; 출 1:2, 레 2:3
   if (q.includes(";") || /\d\s*,\s*[가-힣]/.test(q)) {
@@ -868,7 +869,7 @@ const PADS = {
 const loadLxx = b => getJSON(`data/lxx/${String(b).padStart(2, "0")}.json`);
 
 function showMenu() {
-  const items = [["home", "⌂", "본문 (홈)"], ["inter", "≡", "인터리니어 패드"], ["tts", "♪", "TTS 패드"], ["copy", "✍", "필사 패드"], ["kateta", "❝", "카테타 패드 (주석)"], ["names", "☺", "인물·지명 사전"], ["cards", "▣", "암송 카드"],
+  const items = [["home", "⌂", "본문 (홈)"], ["inter", "≡", "인터리니어 패드"], ["tts", "♪", "TTS 패드"], ["copy", "✍", "필사 패드"], ["kateta", "❝", "카테타 패드 (주석)"], ["names", "☺", "인물·지명 사전"], ["cards", "▣", "암송 카드"], ["osearch", "ℵ", "원어로 찾기"],
     ["plan", "▦", "연간 읽기표"], ["notes", "✎", "묵상 노트"], ["marks", "⚑", "저장 목록 (북마크)"]];
   const h = `<nav class="menu">${items.map(([k, i, n]) => `<button type="button" class="${state.pad === k ? "cur" : ""}" data-pad="${k}"><span class="mi">${i}</span>${n}</button>`).join("")}
     <hr><button type="button" data-act="settings"><span class="mi">⚙</span>설정</button></nav>
@@ -1418,6 +1419,62 @@ function gradeCard(g) {
   drawCard();
 }
 
+
+// ---------- 원어로 찾기: 스트롱 번호 · 히브리어/헬라어 · 한글 발음 · 한국어/영어 뜻 ----------
+let OIDX = null;
+const stripMarks = t => String(t || "").normalize("NFD").replace(/[֑-ׇ̀-ͯ]/g, "").replace(/ς/g, "σ").toLowerCase().trim();
+async function oIndex() {
+  if (OIDX) return OIDX;
+  const [lh, lg, ch, cg] = await Promise.all([loadLex("H"), loadLex("G"), loadConc("H").catch(() => ({})), loadConc("G").catch(() => ({}))]);
+  OIDX = [];
+  for (const [lex, conc, lang] of [[lh, ch, "H"], [lg, cg, "G"]]) {
+    for (const [s, L] of Object.entries(lex)) {
+      if (!/^[HG]\d{4}[A-Z]?$/.test(s) || /^H9\d{3}/.test(s)) continue;
+      const pron = lang === "H" ? KOR.heb(L[1]) : KOR.grk(L[0]);
+      OIDX.push({ s, L, lang, n: (conc[s] || []).length, lem: stripMarks(L[0]), pron: pron.replace(/\s/g, ""), ko: GKO[s] || "", en: (L[3] || "").toLowerCase() });
+    }
+  }
+  return OIDX;
+}
+async function oSearch(q) {
+  q = q.trim(); if (!q) return [];
+  const idx = await oIndex();
+  const sq = stripMarks(q), kq = q.replace(/\s/g, "");
+  let kind, hit;
+  if (/^[HGhg]\s*\d+/.test(q)) {
+    kind = "스트롱 번호";
+    const m = q.toUpperCase().replace(/\s/g, "").match(/^([HG])(\d+)([A-Z]?)$/);
+    const pre = m ? m[1] + m[2].padStart(4, "0") + (m[3] || "") : q.toUpperCase();
+    hit = idx.filter(e => e.s.startsWith(pre));
+  } else if (/[֐-׿Ͱ-Ͽἀ-῿]/.test(q)) {
+    kind = "원어";
+    hit = idx.filter(e => e.lem.includes(sq)).map(e => ({ ...e, sc: e.lem === sq ? 2 : e.lem.startsWith(sq) ? 1 : 0 }));
+  } else if (/[가-힣]/.test(q)) {
+    kind = "한글 발음·뜻";
+    hit = idx.filter(e => e.pron.includes(kq) || e.ko.includes(q)).map(e => ({ ...e, sc: (e.pron === kq ? 3 : 0) + (e.ko.split("/").includes(q) ? 3 : 0) + (e.pron.startsWith(kq) ? 1 : 0) + (e.ko.includes(q) ? 1 : 0) }));
+  } else {
+    kind = "영어 뜻";
+    const lq = q.toLowerCase();
+    hit = idx.filter(e => e.en.includes(lq)).map(e => ({ ...e, sc: e.en === lq || e.en.split(/[:/]/).map(x => x.trim()).includes(lq) ? 2 : 0 }));
+  }
+  hit.sort((a, b) => ((b.sc || 0) - (a.sc || 0)) || (b.n - a.n));
+  return { kind, list: hit.slice(0, 80), total: hit.length };
+}
+async function showOSearch(q = "") {
+  const h = `<form id="oForm" class="qrow"><input type="search" id="oQ" value="${esc(q)}" placeholder="H2617 · חסד · ἀγάπη · 헤세드 · 인애 · mercy" autocomplete="off" enterkeyhint="search"><button class="qbtn go" type="submit">찾기</button></form>
+    <p class="hint">스트롱 번호, 히브리어·헬라어(모음 부호 없이도 됨), 한글 발음, 한국어 뜻, 영어 뜻으로 찾습니다.</p><div class="list" id="oRes"></div>`;
+  openSheet("원어로 찾기", h, { full: true });
+  if (q) runOSearch(q); else setTimeout(() => $("#oQ")?.focus(), 50);
+}
+async function runOSearch(q) {
+  const out = $("#oRes"); if (!out) return;
+  out.innerHTML = `<p class="small">찾는 중…</p>`;
+  const r = await oSearch(q);
+  if (!r.list || !r.list.length) { out.innerHTML = `<p class="hint">찾지 못했습니다. 다른 표기로 써 보세요.</p>`; return; }
+  out.innerHTML = `<p class="small">${esc(r.kind)} 검색 · ${r.total}개${r.total > 80 ? " · 많이 쓰인 순 80개" : ""}</p>` + r.list.map(e =>
+    `<button class="item" type="button" data-lex="${esc(e.s)}"><span class="ref"><span class="${e.lang === "H" ? "he" : "gr"} olem">${esc(e.L[0])}</span> ${esc(KOR && (e.lang === "H" ? KOR.heb(e.L[1]) : KOR.grk(e.L[0])))} <small class="small">${esc(e.s)} · ${e.n}절</small></span><span class="txt">${esc(e.ko || e.L[3])}${e.ko ? ` <small class="small">${esc(e.L[3])}</small>` : ""}</span></button>`).join("");
+}
+
 // ---------- 한국어 약식 분해 (예: 동사-칼-완-3남단, 명사.여단여) ----------
 const SHORT = [
   [/^칼/, "칼"], [/^니팔/, "닢"], [/^피엘/, "피"], [/^푸알/, "푸"], [/^히필/, "힢"], [/^호팔/, "홒"], [/^히트파엘/, "힡"],
@@ -1651,6 +1708,7 @@ document.addEventListener("click", async e => {
     if (d.pad === "marks") return showNotes("marks");
     if (d.pad === "names") return showNameIndex();
     if (d.pad === "cards") return showCards();
+    if (d.pad === "osearch") return showOSearch();
     return setPad(d.pad);
   }
   if (d.pchk !== undefined) {
@@ -1726,7 +1784,7 @@ document.addEventListener("click", async e => {
 $("#scrim").addEventListener("click", () => { sheetStack = []; closeSheet(); });
 document.addEventListener("keydown", e => { if (e.key === "Escape" && !$("#sheet").hidden) closeSheet(); });
 $("#quickForm").addEventListener("submit", e => { e.preventDefault(); $("#quick").blur(); quickSearch($("#quick").value); });
-document.addEventListener("submit", e => { if (e.target.id === "nameForm") { e.preventDefault(); showNameIndex($("#nameQ").value, state.nameT || ""); } });
+document.addEventListener("submit", e => { if (e.target.id === "oForm") { e.preventDefault(); $("#oQ").blur(); runOSearch($("#oQ").value); return; } if (e.target.id === "nameForm") { e.preventDefault(); showNameIndex($("#nameQ").value, state.nameT || ""); } });
 $("#ctxForm").addEventListener("submit", e => { e.preventDefault(); $("#ctxq").blur(); ctxSearch($("#ctxq").value); });
 $("#kw").addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); rangeSearch(); } });
 document.addEventListener("change", e => {

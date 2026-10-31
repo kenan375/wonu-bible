@@ -282,3 +282,6 @@ a.btn{text-decoration:none;display:inline-block}
 .flash .fm{font-size:1.5rem;font-weight:700}
 .grade{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
 .grade .btn{padding:14px 0;font-size:1rem}
+
+.olem.he{font-family:var(--f-he);color:var(--he);font-size:1.15rem}
+.olem.gr{font-family:var(--f-gr);color:var(--gr);font-size:1.1rem}
