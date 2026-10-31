@@ -483,6 +483,7 @@ async function showNotes(tab) {
   if (tab === "notes") {
     h += `<div class="actions"><button class="btn" type="button" data-act="export" ${notes.length ? "" : "disabled"}>말씀서재로 내보내기 (.md)</button><button class="btn ghost" type="button" data-act="copymd" ${notes.length ? "" : "disabled"}>마크다운 복사</button></div>`;
     if (!notes.length) h += `<p class="hint">아직 노트가 없습니다. 절 아래 ✎를 누르면 메모를 남길 수 있습니다.</p>`;
+    else if (Date.now() - store.get("lastBackup", 0) > 14 * 86400000) h += `<p class="tip small"><b>백업</b> ${esc(backupInfo())} 노트는 이 휴대폰에만 있습니다. <button class="linklike" type="button" data-act="backup">지금 백업하기</button></p>`;
     h += `<div class="list">`;
     for (const [k, n] of notes) { const [b, c, v] = fromKey(k); h += `<button class="item" type="button" data-go="${b}.${c}.${v}"><span class="ref">${esc(refStr(b, c, v))}</span><span class="txt">${esc(n.text.slice(0, 120))}${n.text.length > 120 ? "…" : ""}</span></button>`; }
     h += `</div>`;
@@ -782,6 +783,7 @@ async function showSettings() {
     <input type="file" id="bdbFile" accept=".bdb,.db,.sqlite,.sqlite3,application/octet-stream">
     <div class="progress" hidden id="impProg"><span></span></div><p class="small" id="impMsg"></p>
     ${meta ? `<div><button class="btn plain" type="button" data-act="delkor">한글 본문 지우기</button></div>` : ""}</div>
+  ${backupCard()}
   <div class="card"><h3>오프라인 저장</h3>
     <p class="hint">지금은 읽은 책만 저장됩니다. 와이파이에서 한 번 눌러 두면 인터넷 없이 모든 기능을 쓸 수 있습니다 (약 30MB 전송).</p>
     <div><button class="btn ghost" type="button" data-act="offline">전체 원어 데이터 저장</button></div>
@@ -1207,8 +1209,8 @@ async function showStudy(keys) {
     <p class="hint">옵시디언 말씀서재 폴더에 저장하거나, 복사해서 새 노트에 붙여넣으세요. 빈 칸(대응어·적용)은 직접 채우시면 됩니다.</p>
     <pre class="md-prev">${esc(md)}</pre>`;
 }
-async function shareFile(md, name) {
-  const file = new File([md], name, { type: "text/markdown" });
+async function shareFile(md, name, type = "text/markdown") {
+  const file = new File([md], name, { type });
   if (navigator.canShare && navigator.canShare({ files: [file] })) {
     try { await navigator.share({ files: [file], title: name }); return; } catch (e) { if (e.name === "AbortError") return; }
   }
@@ -1218,6 +1220,53 @@ async function shareFile(md, name) {
   setTimeout(() => URL.revokeObjectURL(a.href), 4000);
   toast("다운로드 폴더에 저장했습니다");
 }
+
+
+// ---------- 백업·복원 (노트·북마크·필사·읽기표·설정. 한글 성경 본문은 넣지 않음) ----------
+const BK_KEYS = ["copyDone", "planDone", "qhist", "chist", "comm", "fs", "theme", "gloss", "kor", "allOrig", "allEn", "ttsRate"];
+async function makeBackup() {
+  const notes = (await idb.all("notes")).map(([k, v]) => [k, v]);
+  const prefs = {}; for (const k of BK_KEYS) { const v = store.get(k, undefined); if (v !== undefined) prefs[k] = v; }
+  return { app: "원어서재", version: 1, at: new Date().toISOString(), notes, marks: [...state.marks], prefs };
+}
+async function exportBackup() {
+  const data = await makeBackup();
+  const name = `원어서재-백업-${today()}.json`;
+  await shareFile(JSON.stringify(data, null, 1), name, "application/json");
+  store.set("lastBackup", Date.now());
+  const el = $("#bkInfo"); if (el) el.textContent = backupInfo();
+}
+function backupInfo() {
+  const t = store.get("lastBackup", 0);
+  return t ? `마지막 백업: ${new Date(t).toLocaleDateString("ko-KR")}` : "아직 백업한 적이 없습니다.";
+}
+async function importBackup(file) {
+  const msg = $("#bkMsg");
+  try {
+    const data = JSON.parse(await file.text());
+    if (data.app !== "원어서재" || !Array.isArray(data.notes)) throw new Error("원어서재 백업 파일이 아닙니다.");
+    let added = 0, updated = 0, kept = 0;
+    for (const [k, n] of data.notes) {
+      const key = +k, cur = state.notes.get(key);
+      if (!cur) { await idb.put("notes", key, n); state.notes.set(key, n); added++; }
+      else if ((n.updated || 0) > (cur.updated || 0)) { await idb.put("notes", key, n); state.notes.set(key, n); updated++; }
+      else kept++;
+    }
+    for (const m of data.marks || []) state.marks.add(+m);
+    await idb.put("meta", "marks", [...state.marks]);
+    const p = data.prefs || {};
+    for (const k of ["copyDone", "planDone"]) if (Array.isArray(p[k])) store.set(k, [...new Set([...store.get(k, []), ...p[k]])]);
+    for (const k of ["comm", "fs", "theme", "gloss", "kor", "ttsRate"]) if (p[k] !== undefined && store.get(k, undefined) === undefined) store.set(k, p[k]);
+    msg.textContent = `불러왔습니다: 노트 새로 ${added}개, 더 최신으로 바꿈 ${updated}개, 그대로 둠 ${kept}개 · 북마크 ${data.marks ? data.marks.length : 0}개`;
+    toast("백업을 불러왔습니다"); markTools();
+  } catch (e) { msg.textContent = "불러오지 못했습니다: " + e.message; }
+}
+const backupCard = () => `<div class="card"><h3>백업 · 복원</h3>
+  <p class="hint">노트, 북마크, 필사·읽기표 기록, 설정을 파일 하나로 저장합니다. 휴대폰을 바꾸거나 앱 데이터를 지우기 전에 꼭 백업해 두세요. 개역개정 본문은 들어가지 않습니다.</p>
+  <p class="small" id="bkInfo">${backupInfo()}</p>
+  <div class="actions"><button class="btn" type="button" data-act="backup">백업 파일 만들기</button></div>
+  <label class="field"><span class="small">백업 파일에서 불러오기 (지금 있는 노트는 지우지 않고 합칩니다)</span><input type="file" id="bkFile" accept=".json,application/json"></label>
+  <p class="small" id="bkMsg"></p></div>`;
 
 // ---------- 한국어 약식 분해 (예: 동사-칼-완-3남단, 명사.여단여) ----------
 const SHORT = [
@@ -1499,6 +1548,7 @@ document.addEventListener("click", async e => {
     case "showmarks": { sheetStack = []; hideSheet(); const list = [...state.marks].sort((a, b) => a - b).map(fromKey); return showList(list, "북마크"); }
     case "moredef": { const el = $("#def"); if (el) { el.classList.toggle("open"); t.textContent = el.classList.contains("open") ? "접기" : "전체 보기"; } return; }
     case "concmore": return drawConc(false);
+    case "backup": return exportBackup();
     case "studyList": return showStudy(state.list.map(r => refKey(...r)));
     case "studyShare": return state.studyMd && shareFile(state.studyMd.md, state.studyMd.name);
     case "studyCopy": try { await navigator.clipboard.writeText(state.studyMd.md); toast("복사했습니다. 옵시디언에 붙여넣으세요."); } catch { toast("복사가 막혀 있습니다. 보내기를 써 주세요."); } return;
@@ -1521,6 +1571,7 @@ $("#kw").addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDe
 document.addEventListener("change", e => {
   const id = e.target.id;
   if (id === "bdbFile" && e.target.files[0]) return importBdb(e.target.files[0]);
+  if (id === "bkFile" && e.target.files[0]) return importBackup(e.target.files[0]);
   // 책을 바꾸면 장·절은 비움(책 전체), 장을 바꾸면 절은 비움(장 전체)
   if (id === "b1" || id === "c1") return fillCV($("#b1"), $("#c1"), $("#v1"), id === "b1" ? 0 : +$("#c1").value, 0);
   if (id === "b2" || id === "c2") return fillCV($("#b2"), $("#c2"), $("#v2"), id === "b2" ? 0 : +$("#c2").value, 0);
