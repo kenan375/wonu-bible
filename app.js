@@ -207,6 +207,8 @@ function koWord(w, b) {
   return parts.length ? parts.join("/") : (GKO[w[3]] || "");
 }
 const koOr = (ko, en) => ko || en;
+// 히브리어 억양(칸틸레이션) 부호와 자료용 기호 빼기: 글꼴에 따라 네모로 깨지는 것을 막음
+const plainW = t => String(t || "").replace(/[\u0591-\u05AF\u05BD\u05C0\u05C3\\\/]/g, "").trim();
 
 // ---------- 상태 ----------
 const state = {
@@ -435,8 +437,8 @@ async function showWord(i) {
   const segStrongs = [main, ...(segs || []).map(x => x[1])].filter(Boolean);
   if (segStrongs.some(x => (lex[x] && lex[x][2].startsWith("N:")))) h += await nameCardFor(segStrongs, refKey(b, c, v));
   h += lexCard(lex, main, lang, conc);
-  h += `<div class="actions"><button class="btn" type="button" data-conc="${esc(main)}">용례 ${(conc[main] || []).length}곳 보기</button><button class="btn ghost" type="button" data-addword="${i}">노트에 담기</button></div>`;
-  openSheet(`${refStr(b, c, v)} · ${surf}`, h);
+  h += `<div class="actions"><button class="btn" type="button" data-conc="${esc(main)}">용례 ${(conc[main] || []).length}곳 보기</button><button class="btn ghost" type="button" data-addword="${i}">노트에 담기</button><button class="btn ghost" type="button" data-addcard="${esc(main)}" data-cw="${esc(surf)}" data-cref="${esc(refStr(b, c, v))}">카드에 담기</button></div>`;
+  openSheet(`${refStr(b, c, v)} · ${plainW(surf)}`, h);
 }
 
 // ---------- 노트 · 북마크 ----------
@@ -866,7 +868,7 @@ const PADS = {
 const loadLxx = b => getJSON(`data/lxx/${String(b).padStart(2, "0")}.json`);
 
 function showMenu() {
-  const items = [["home", "⌂", "본문 (홈)"], ["inter", "≡", "인터리니어 패드"], ["tts", "♪", "TTS 패드"], ["copy", "✍", "필사 패드"], ["kateta", "❝", "카테타 패드 (주석)"], ["names", "☺", "인물·지명 사전"],
+  const items = [["home", "⌂", "본문 (홈)"], ["inter", "≡", "인터리니어 패드"], ["tts", "♪", "TTS 패드"], ["copy", "✍", "필사 패드"], ["kateta", "❝", "카테타 패드 (주석)"], ["names", "☺", "인물·지명 사전"], ["cards", "▣", "암송 카드"],
     ["plan", "▦", "연간 읽기표"], ["notes", "✎", "묵상 노트"], ["marks", "⚑", "저장 목록 (북마크)"]];
   const h = `<nav class="menu">${items.map(([k, i, n]) => `<button type="button" class="${state.pad === k ? "cur" : ""}" data-pad="${k}"><span class="mi">${i}</span>${n}</button>`).join("")}
     <hr><button type="button" data-act="settings"><span class="mi">⚙</span>설정</button></nav>
@@ -1225,7 +1227,7 @@ async function shareFile(md, name, type = "text/markdown") {
 
 
 // ---------- 백업·복원 (노트·북마크·필사·읽기표·설정. 한글 성경 본문은 넣지 않음) ----------
-const BK_KEYS = ["copyDone", "planDone", "qhist", "chist", "comm", "fs", "theme", "gloss", "kor", "allOrig", "allEn", "ttsRate"];
+const BK_KEYS = ["cards", "cardProg", "deck", "copyDone", "planDone", "qhist", "chist", "comm", "fs", "theme", "gloss", "kor", "allOrig", "allEn", "ttsRate"];
 async function makeBackup() {
   const notes = (await idb.all("notes")).map(([k, v]) => [k, v]);
   const prefs = {}; for (const k of BK_KEYS) { const v = store.get(k, undefined); if (v !== undefined) prefs[k] = v; }
@@ -1258,6 +1260,8 @@ async function importBackup(file) {
     await idb.put("meta", "marks", [...state.marks]);
     const p = data.prefs || {};
     for (const k of ["copyDone", "planDone"]) if (Array.isArray(p[k])) store.set(k, [...new Set([...store.get(k, []), ...p[k]])]);
+    if (Array.isArray(p.cards)) { const cur = myCards(); for (const c of p.cards) if (!cur.some(x => x.s === c.s)) cur.push(c); store.set("cards", cur); }
+    if (p.cardProg) { const cur = cardProg(); for (const [k, v] of Object.entries(p.cardProg)) if (!cur[k] || (v.box || 0) > (cur[k].box || 0)) cur[k] = v; store.set("cardProg", cur); }
     for (const k of ["comm", "fs", "theme", "gloss", "kor", "ttsRate"]) if (p[k] !== undefined && store.get(k, undefined) === undefined) store.set(k, p[k]);
     msg.textContent = `불러왔습니다: 노트 새로 ${added}개, 더 최신으로 바꿈 ${updated}개, 그대로 둠 ${kept}개 · 북마크 ${data.marks ? data.marks.length : 0}개`;
     toast("백업을 불러왔습니다"); markTools();
@@ -1345,6 +1349,75 @@ async function showNameIndex(q = "", t = "") {
   state.nameT = t;
 }
 
+
+// ---------- 원어 단어 암송 카드 (간단한 상자식 반복: 모름→1일, 애매→2일, 앎→상자마다 1·3·7·16·35일) ----------
+const BOX_DAYS = [0, 1, 3, 7, 16, 35];
+const myCards = () => store.get("cards", []);          // [{s, w, ref}]
+const cardProg = () => store.get("cardProg", {});      // {s: {box, due}}
+function addCard(strong, word, ref) {
+  const list = myCards();
+  if (list.some(c => c.s === strong)) return toast("이미 카드에 있습니다");
+  list.push({ s: strong, w: plainW(word), ref }); store.set("cards", list);
+  toast("암송 카드에 담았습니다");
+}
+async function deckOf(name) {
+  if (name === "mine") return myCards().map(c => c.s);
+  const lang = name === "heb" ? "H" : "G";
+  const [lex, conc] = await Promise.all([loadLex(lang), loadConc(lang)]);
+  return Object.keys(lex).filter(s => /^[HG]:(V|N-|A)/.test(lex[s][2]) && GKO[s] && /^[HG]\d{4}[A-Z]?$/.test(s))
+    .sort((a, b) => (conc[b] || []).length - (conc[a] || []).length).slice(0, 150);
+}
+const cardState = { deck: "mine", queue: [], i: 0, flipped: false, done: 0 };
+async function showCards(deck) {
+  cardState.deck = deck || store.get("deck", myCards().length ? "mine" : "heb");
+  store.set("deck", cardState.deck);
+  const all = await deckOf(cardState.deck);
+  const prog = cardProg(), now = Date.now();
+  const due = all.filter(s => !prog[s] || prog[s].due <= now);
+  const fresh = due.filter(s => !prog[s]), review = due.filter(s => prog[s]);
+  cardState.queue = [...review, ...fresh.slice(0, 20)]; // 새 카드는 하루 20장까지
+  cardState.i = 0; cardState.flipped = false; cardState.done = 0;
+  const learned = all.filter(s => prog[s] && prog[s].box >= 3).length;
+  const head = `<div class="chips"><button class="chip" type="button" data-deck="mine" aria-pressed="${cardState.deck === "mine"}">내 카드 ${myCards().length}</button><button class="chip" type="button" data-deck="heb" aria-pressed="${cardState.deck === "heb"}">히브리어 150</button><button class="chip" type="button" data-deck="grk" aria-pressed="${cardState.deck === "grk"}">헬라어 150</button></div>
+    <p class="small">오늘 ${cardState.queue.length}장 · 익힌 단어 ${learned}/${all.length}</p><div id="cardBox"></div>`;
+  openSheet("암송 카드", head, { full: true });
+  drawCard();
+}
+async function drawCard() {
+  const box = $("#cardBox"); if (!box) return;
+  if (cardState.deck === "mine" && !myCards().length) { box.innerHTML = `<p class="hint">아직 담은 카드가 없습니다. 원어 단어를 누른 뒤 <b>카드에 담기</b>를 누르거나, 위에서 히브리어·헬라어 150을 골라 보세요.</p>`; return; }
+  const s = cardState.queue[cardState.i];
+  if (!s) { box.innerHTML = `<div class="flash done"><p class="nm">오늘 분량을 마쳤습니다</p><p class="small">${cardState.done}장 복습 · 다음 카드는 정해진 날에 다시 나옵니다.</p></div>`; return; }
+  const lang = s[0];
+  const [lex, conc] = await Promise.all([loadLex(lang), loadConc(lang).catch(() => ({}))]);
+  const L = lex[s] || [s, "", "", "", ""];
+  const pron = lang === "H" ? KOR.heb(L[1]) : KOR.grk(L[0]);
+  const mine = myCards().find(c => c.s === s);
+  const ex = (conc[s] || [])[0];
+  const pos = (L[2] || "").includes("V") ? "동사" : (L[2] || "").includes("A") ? "형용사" : "명사";
+  box.innerHTML = `<button class="flash" type="button" data-act="flip" aria-label="카드 뒤집기">
+      <span class="small">${cardState.i + 1} / ${cardState.queue.length}</span>
+      <span class="fw ${lang === "H" ? "he" : "gr"}">${esc(L[0])}</span>
+      ${cardState.flipped ? `<span class="fk">${esc(pron)}</span>
+        <span class="fm">${esc(GKO[s] || L[3])}</span>
+        <span class="small">${pos} · ${esc(s)} · 성경 ${(conc[s] || []).length}절</span>
+        ${mine && mine.ref ? `<span class="small">담은 곳: ${esc(mine.ref)} ${esc(mine.w || "")}</span>` : ex ? `<span class="small">예: ${esc(refStr(...fromKey(ex)))}</span>` : ""}`
+      : `<span class="small">눌러서 뜻 보기</span>`}
+    </button>
+    ${cardState.flipped ? `<div class="grade"><button class="btn plain" type="button" data-grade="0">모름</button><button class="btn plain" type="button" data-grade="1">애매</button><button class="btn" type="button" data-grade="2">앎</button></div>
+      <div class="row"><button class="linklike" type="button" data-lex="${esc(s)}">사전 보기</button>${cardState.deck === "mine" ? `<button class="linklike" type="button" data-uncard="${esc(s)}">카드에서 빼기</button>` : `<button class="linklike" type="button" data-addcard="${esc(s)}">내 카드에 담기</button>`}</div>` : ""}`;
+}
+function gradeCard(g) {
+  const s = cardState.queue[cardState.i]; if (!s) return;
+  const prog = cardProg(); const p = prog[s] || { box: 0 };
+  p.box = g === 0 ? 1 : g === 1 ? Math.max(1, p.box) : Math.min(5, p.box + 1);
+  p.due = Date.now() + (g === 0 ? 0.5 : g === 1 ? 1 : BOX_DAYS[p.box]) * 86400000 - 3600000;
+  prog[s] = p; store.set("cardProg", prog);
+  if (g === 0) cardState.queue.push(s); // 모르는 카드는 오늘 한 번 더
+  cardState.i++; cardState.flipped = false; cardState.done++;
+  drawCard();
+}
+
 // ---------- 한국어 약식 분해 (예: 동사-칼-완-3남단, 명사.여단여) ----------
 const SHORT = [
   [/^칼/, "칼"], [/^니팔/, "닢"], [/^피엘/, "피"], [/^푸알/, "푸"], [/^히필/, "힢"], [/^호팔/, "홒"], [/^히트파엘/, "힡"],
@@ -1427,7 +1500,7 @@ async function showLxxWord(i) {
     h += lexCard(lexG, strong, "G", concG);
     h += `<div class="actions"><button class="btn" type="button" data-conc="${esc(strong)}">신약 용례 ${(concG[strong] || []).length}곳 보기</button></div>`;
   }
-  openSheet(`${refStr(b, c, v)} · ${surf}`, h);
+  openSheet(`${refStr(b, c, v)} · ${plainW(surf)}`, h);
 }
 
 // ---------- TTS 패드 ----------
@@ -1559,6 +1632,10 @@ document.addEventListener("click", async e => {
     return togglePanel(art, d.tool, key);
   }
   if (d.w !== undefined) return showWord(+d.w);
+  if (d.deck) return showCards(d.deck);
+  if (d.grade !== undefined) return gradeCard(+d.grade);
+  if (d.addcard) { addCard(d.addcard, d.cw || "", d.cref || ""); return; }
+  if (d.uncard) { store.set("cards", myCards().filter(c => c.s !== d.uncard)); toast("카드에서 뺐습니다"); cardState.i++; cardState.flipped = false; return drawCard(); }
   if (d.name) return showName(d.name, !$("#sheet").hidden);
   if (d.namerefs) { const e = NAMES[d.namerefs]; sheetStack = []; hideSheet(); state.pad = state.pad === "plan" ? "home" : state.pad; return showList(e.r.map(fromKey), `${nameKo(d.namerefs)} (${e.r.length}절)`); }
   if (d.nt !== undefined) return showNameIndex($("#nameQ")?.value || "", d.nt);
@@ -1573,6 +1650,7 @@ document.addEventListener("click", async e => {
     if (d.pad === "notes") return showNotes("notes");
     if (d.pad === "marks") return showNotes("marks");
     if (d.pad === "names") return showNameIndex();
+    if (d.pad === "cards") return showCards();
     return setPad(d.pad);
   }
   if (d.pchk !== undefined) {
@@ -1629,6 +1707,7 @@ document.addEventListener("click", async e => {
     case "showmarks": { sheetStack = []; hideSheet(); const list = [...state.marks].sort((a, b) => a - b).map(fromKey); return showList(list, "북마크"); }
     case "moredef": { const el = $("#def"); if (el) { el.classList.toggle("open"); t.textContent = el.classList.contains("open") ? "접기" : "전체 보기"; } return; }
     case "concmore": return drawConc(false);
+    case "flip": cardState.flipped = !cardState.flipped; return drawCard();
     case "backup": return exportBackup();
     case "studyList": return showStudy(state.list.map(r => refKey(...r)));
     case "studyShare": return state.studyMd && shareFile(state.studyMd.md, state.studyMd.name);

@@ -271,3 +271,14 @@ textarea{min-height:9em;resize:vertical;width:100%;font-family:var(--f-ko);line-
 .nm-forms .gr{font-family:var(--f-gr);color:var(--gr)}
 .name-card{border-color:var(--accent)}
 a.btn{text-decoration:none;display:inline-block}
+
+/* 암송 카드 */
+.flash{width:100%;min-height:46vh;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;border:1px solid var(--line);background:var(--surface);border-radius:18px;padding:24px 16px;cursor:pointer;text-align:center}
+.flash.done{cursor:default}
+.flash .fw{font-size:3.2rem;line-height:1.2}
+.flash .fw.he{font-family:var(--f-he);color:var(--he);direction:rtl}
+.flash .fw.gr{font-family:var(--f-gr);color:var(--gr)}
+.flash .fk{font-size:1.3rem;color:var(--accent);font-weight:700}
+.flash .fm{font-size:1.5rem;font-weight:700}
+.grade{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.grade .btn{padding:14px 0;font-size:1rem}
