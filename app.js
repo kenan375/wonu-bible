@@ -196,6 +196,18 @@ const KOR = (() => {
 
 const korOf = (w, b) => isOT(b) ? KOR.heb(w[1]) : KOR.grk(w[0]);
 
+
+// ---------- 한국어 뜻 ----------
+let GKO = {};
+const gkoOf = (strong, lemma, lang) => GKO[strong] || "";
+// 단어 하나의 한국어 뜻 (히브리어는 접두어 조각까지: 그리고/사랑하다)
+function koWord(w, b) {
+  if (!isOT(b) || !w[5] || w[5].length < 2) return GKO[w[3]] || "";
+  const parts = w[5].map(([t, s]) => GKO[s] || "").filter(Boolean);
+  return parts.length ? parts.join("/") : (GKO[w[3]] || "");
+}
+const koOr = (ko, en) => ko || en;
+
 // ---------- 상태 ----------
 const state = {
   b: store.get("b", 1), c: store.get("c", 1),
@@ -340,7 +352,7 @@ async function togglePanel(article, tool, key, forceOpen) {
       for (const w of ws) {
         const i = state.words.push({ w, b, c, v }) - 1;
         const cls = "w" + (w[6] === 2 ? " var" : "") + (w[6] === 1 ? " ttl" : "");
-        h += `<button class="${cls}" type="button" data-w="${i}">${w[6] === 2 ? "[" + esc(w[0]) + "]" : esc(w[0])}<span class="kp">${esc(korOf(w, b))}</span><span class="g">${esc(w[2])}</span></button>`;
+        h += `<button class="${cls}" type="button" data-w="${i}">${w[6] === 2 ? "[" + esc(w[0]) + "]" : esc(w[0])}<span class="kp">${esc(korOf(w, b))}</span><span class="g">${esc(koOr(koWord(w, b), w[2]))}</span></button>`;
       }
       div.innerHTML = h + `</div>`;
     }
@@ -403,11 +415,11 @@ async function showWord(i) {
   const [surf, translit, eng, main, mcode, segs, flag] = w;
   const cls = lang === "H" ? "he" : "gr";
   let h = `<div class="big ${cls}">${esc(surf)}</div>`;
-  h += `<dl class="kv"><dt>한글 발음</dt><dd class="kor">${esc(lang === "H" ? KOR.heb(translit) : KOR.grk(surf)) || "—"}</dd><dt>음역</dt><dd>${esc(translit) || "—"}</dd><dt>문맥 번역</dt><dd>${esc(eng) || "—"}</dd><dt>본문</dt><dd>${esc(refStr(b, c, v))}</dd></dl>`;
+  h += `<dl class="kv"><dt>한글 발음</dt><dd class="kor">${esc(lang === "H" ? KOR.heb(translit) : KOR.grk(surf)) || "—"}</dd><dt>음역</dt><dd>${esc(translit) || "—"}</dd><dt>뜻</dt><dd class="ko-g">${esc(koWord(w, b)) || "—"}</dd><dt>문맥 번역</dt><dd>${esc(eng) || "—"}</dd><dt>본문</dt><dd>${esc(refStr(b, c, v))}</dd></dl>`;
   if (flag === 2) h += `<p class="hint">이 단어는 NA28 비평본문에는 없고 공인본문(TR)에만 있는 이형입니다.</p>`;
   if (lang === "H" && segs.length > 1) {
     h += `<div class="card"><h3>단어 분해</h3><div class="segs">`;
-    segs.forEach(([t, s]) => { const L = lex[s]; h += `<button class="seg${s === main ? " main" : ""}" type="button" data-lex="${esc(s)}"><span class="he">${esc(t)}</span><small>${esc(s)} · ${esc(L ? L[3] : "")}</small></button>`; });
+    segs.forEach(([t, s]) => { const L = lex[s]; h += `<button class="seg${s === main ? " main" : ""}" type="button" data-lex="${esc(s)}"><span class="he">${esc(t)}</span><small>${esc(s)} · ${esc(koOr(GKO[s], L ? L[3] : ""))}</small></button>`; });
     h += `</div></div>`;
   }
   const mrows = (mcode || "").split("/").filter(Boolean).map(code => morph[code]).filter(Boolean);
@@ -653,7 +665,7 @@ function lexCard(lex, s, lang, conc) {
   const [lemma, tr, pos, gloss, def, rel, link] = L;
   const cls = lang === "H" ? "he" : "gr";
   let h = `<div class="card"><h3>사전 · ${lang === "H" ? "히브리어" : "헬라어"}</h3>`;
-  h += `<div class="lemma"><span class="${cls}" ${cls === "he" ? 'dir="rtl"' : ""}>${esc(lemma)}</span><span class="kor">${esc(lang === "H" ? KOR.heb(tr) : KOR.grk(lemma))}</span><span class="small">${esc(tr)}</span><span class="strong">${esc(s)}</span><b>${esc(gloss)}</b></div>`;
+  h += `<div class="lemma"><span class="${cls}" ${cls === "he" ? 'dir="rtl"' : ""}>${esc(lemma)}</span><span class="kor">${esc(lang === "H" ? KOR.heb(tr) : KOR.grk(lemma))}</span><span class="small">${esc(tr)}</span><span class="strong">${esc(s)}</span><b>${esc(koOr(GKO[s], gloss))}</b>${GKO[s] ? `<span class="small">${esc(gloss)}</span>` : ""}</div>`;
   if (rel && link) h += `<p class="small">${esc(relKo(rel))} <button class="linklike" type="button" data-lex="${esc(link)}">${esc(link)}</button></p>`;
   if (def) {
     const lxx = (def.match(/\[in LXX[^\]]*\]/) || [])[0];
@@ -675,7 +687,7 @@ async function showLex(s) {
   const [lex, conc] = await Promise.all([loadLex(lang), loadConc(lang).catch(() => ({}))]);
   const h = lexCard(lex, s, lang, conc) +
     `<div class="actions"><button class="btn" type="button" data-conc="${esc(s)}">용례 ${(conc[s] || []).length}곳 보기</button></div>`;
-  openSheet(`${s} · ${lex[s] ? lex[s][3] : ""}`, h, { push: true });
+  openSheet(`${s} · ${koOr(GKO[s], lex[s] ? lex[s][3] : "")}`, h, { push: true });
 }
 
 // ---------- 컨코던스 ----------
@@ -685,7 +697,7 @@ async function showConc(s) {
   const [conc, lex] = await Promise.all([loadConc(lang), loadLex(lang)]);
   concState.s = s; concState.refs = conc[s] || []; concState.filter = "all"; concState.shown = 0;
   const L = lex[s];
-  const head = L ? `<div class="lemma"><span class="${lang === "H" ? "he" : "gr"}">${esc(L[0])}</span><span>${esc(L[1])}</span><span class="strong">${esc(s)}</span><b>${esc(L[3])}</b></div>` : "";
+  const head = L ? `<div class="lemma"><span class="${lang === "H" ? "he" : "gr"}">${esc(L[0])}</span><span>${esc(L[1])}</span><span class="kor">${esc(lang === "H" ? KOR.heb(L[1]) : KOR.grk(L[0]))}</span><span class="strong">${esc(s)}</span><b>${esc(koOr(GKO[s], L[3]))}</b></div>` : "";
   const sameBook = concState.refs.filter(k => fromKey(k)[0] === state.b).length;
   const h = `${head}<div class="chips" role="group" aria-label="범위">
     <button class="chip" type="button" data-cf="all" aria-pressed="true">전체 ${concState.refs.length}</button>
@@ -830,7 +842,7 @@ async function importBdb(file) {
 async function saveOffline() {
   const msg = $("#offMsg"), prog = $("#offProg"), bar = prog.querySelector("span");
   prog.hidden = false;
-  const files = ["data/vlem.json", "data/vcount.json", "data/morph.json", "data/lex/H.json", "data/lex/G.json", "data/conc/H.json", "data/conc/G.json"];
+  const files = ["data/gko.json", "data/vlem.json", "data/vcount.json", "data/morph.json", "data/lex/H.json", "data/lex/G.json", "data/conc/H.json", "data/conc/G.json"];
   for (let b = 1; b <= 66; b++) for (const dir of ["books", "en", "xref", ...(b <= 39 ? ["lxx"] : [])]) files.push(`data/${dir}/${String(b).padStart(2, "0")}.json`);
   let done = 0, fail = 0;
   for (const f of files) {
@@ -1076,7 +1088,7 @@ async function ctxSearch(q) {
   state.list = ranked.map(([k]) => fromKey(k));
   state.terms = [...new Set(terms.filter(t => t.df).map(t => t.s))];
   state.reasons = new Map(ranked.map(([k]) => [k, [...(why.get(k) || [])]]));
-  const lab = concepts.slice(0, 4).map(([L]) => { const lx = (L[0] === "H" ? lexH : lexG)[L]; return lx ? `<span class="${L[0] === "H" ? "he" : "gr"}">${esc(lx[0])}</span> ${esc(lx[3])}` : esc(L); });
+  const lab = concepts.slice(0, 4).map(([L]) => { const lx = (L[0] === "H" ? lexH : lexG)[L]; return lx ? `<span class="${L[0] === "H" ? "he" : "gr"}">${esc(lx[0])}</span> ${esc(koOr(GKO[L], lx[3]))}` : esc(L); });
   const seedTxt = verses.find(v => v[0] === ranked[0][0]);
   $("#locText").textContent = "맥락 검색";
   $("#info").innerHTML = `<span class="ctx-box"><b>핵심어</b> ${toks.map(t => esc(t.stem) + (t.syn.length ? `<small> (+${esc(t.syn.slice(0, 3).join(", "))})</small>` : "")).join(" · ")}<br>
@@ -1141,7 +1153,7 @@ async function interHTML(b, c, v) {
     h += `<div class="ilin ${lang}" ${lang === "he" ? 'dir="rtl"' : ""}>`;
     for (const w of ws) {
       const i = state.words.push({ w, b, c, v }) - 1;
-      h += `<button class="ib${w[6] === 2 ? " var" : ""}" type="button" data-w="${i}"><span class="ig">${esc(w[2])}</span><span class="iw">${esc(w[0])}</span><span class="it">${esc(w[1])}</span><span class="ikp">${esc(korOf(w, b))}</span><span class="im">${esc(w[4])}</span><span class="ik">${esc(kparse(w[4], morph))}</span></button>`;
+      h += `<button class="ib${w[6] === 2 ? " var" : ""}" type="button" data-w="${i}"><span class="ig">${esc(koOr(koWord(w, b), w[2]))}</span><span class="iw">${esc(w[0])}</span><span class="it">${esc(w[1])}</span><span class="ikp">${esc(korOf(w, b))}</span><span class="im">${esc(w[4])}</span><span class="ik">${esc(kparse(w[4], morph))}</span></button>`;
     }
     h += `</div>`;
   } else h += `<p class="small">원문이 연결되지 않은 절입니다.</p>`;
@@ -1153,7 +1165,7 @@ async function interHTML(b, c, v) {
       for (const x of lx) {
         const i = state.words.push({ lxx: x, b, c, v }) - 1;
         const L = x[1] ? lexG[x[1]] : null;
-        h += `<button class="ib" type="button" data-w="${i}"><span class="ig">${esc(L ? L[3] : "")}</span><span class="iw">${esc(x[0])}</span><span class="it">${esc(L ? L[0] : "")}</span><span class="ikp">${esc(KOR.grk(x[0]))}</span><span class="im">${esc(x[2] || "")}</span><span class="ik">${esc(kparse(x[2], morph))}</span></button>`;
+        h += `<button class="ib" type="button" data-w="${i}"><span class="ig">${esc(x[1] ? koOr(GKO[x[1]], L ? L[3] : "") : "")}</span><span class="iw">${esc(x[0])}</span><span class="it">${esc(L ? L[0] : "")}</span><span class="ikp">${esc(KOR.grk(x[0]))}</span><span class="im">${esc(x[2] || "")}</span><span class="ik">${esc(kparse(x[2], morph))}</span></button>`;
       }
       h += `</div>`;
     }
@@ -1346,7 +1358,7 @@ document.addEventListener("click", async e => {
     const [lex, morph] = await Promise.all([loadLex(lang), loadMorph()]);
     const L = lex[w[3]];
     const mtxt = (w[4] || "").split("/").map(code => (morph[code] || []).map(r => r[1]).join(" ")).filter(Boolean).join(" + ");
-    return showNote(refKey(b, c, v), `- ${w[0]} (${w[1]}) · ${L ? L[0] + " " : ""}${w[3]} · ${L ? L[3] : w[2]}${mtxt ? " · " + mtxt : ""}`);
+    return showNote(refKey(b, c, v), `- ${w[0]} (${w[1]}) · ${L ? L[0] + " " : ""}${w[3]} · ${koOr(koWord(w, b), L ? L[3] : w[2])}${mtxt ? " · " + mtxt : ""}`);
   }
   switch (d.act || t.id) {
     case "prev": return step(-1);
@@ -1412,6 +1424,7 @@ function applyFs() { document.documentElement.style.setProperty("--fs", state.fs
   if (m && +m[1] >= 1 && +m[1] <= 66) { state.b = +m[1]; state.c = +m[2]; }
   if (state.c > BOOKS[state.b-1][2]) state.c = 1;
   applyFs();
+  try { GKO = await getJSON("data/gko.json"); } catch {}
   $("#allOrig").setAttribute("aria-pressed", String(state.allOrig));
   $("#allEn").setAttribute("aria-pressed", String(state.allEn));
   $("#glossBtn").setAttribute("aria-pressed", String(state.gloss));

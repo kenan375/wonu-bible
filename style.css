@@ -252,3 +252,7 @@ textarea{min-height:9em;resize:vertical;width:100%;font-family:var(--f-ko);line-
 .ib .ikp{font-size:.8rem;color:var(--accent);font-weight:600;direction:ltr;white-space:nowrap}
 .kor{color:var(--accent)}
 .lemma .kor{font-weight:700}
+
+.ko-g{color:var(--xr)}
+.ib .ig{color:var(--ink);font-weight:600;opacity:.85}
+.lemma .small{font-size:.78rem}
