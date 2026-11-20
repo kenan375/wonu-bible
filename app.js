@@ -226,6 +226,7 @@ const loadEn = b => getJSON(`data/en/${String(b).padStart(2, "0")}.json`);
 const loadXref = b => getJSON(`data/xref/${String(b).padStart(2, "0")}.json`);
 // ---------- 역본 ----------
 const PUBVERS = [["krv", "개역한글", "한글"], ["kjv", "KJV", "KJV"], ["bsb", "BSB", "BSB"], ["asv", "ASV", "ASV"], ["ylt", "YLT", "YLT"], ["darby", "Darby", "Darby"]];
+let UCOMMS = [];  // 사용자가 불러온 한국어 주석·원전분해 [{id, name, kind:'cdb'|'sdb', count, at}]
 let UVERS = [];   // 사용자가 추가한 역본 [{id, name, count, at}]
 let MYNAME = "개역개정";
 const verCache = new Map();
@@ -294,7 +295,7 @@ async function drawList(scrollKey) {
   if (false) h += `<div class="notice"><b>개역개정 본문이 아직 없습니다.</b><span>설정(☰)에서 갖고 계신 성경 파일(.bdb)을 한 번 불러오면 한글 본문이 나옵니다. 파일은 이 휴대폰 안에만 저장됩니다. 그 전에는 영어(KJV)로 보여 드립니다.</span><div><button class="btn" type="button" data-act="settings">파일 불러오기</button></div></div>`;
   if (state.mode === "chapter") h += `<div class="headband"><span>${esc(BOOKS[state.b-1][0])} ${state.c}장</span><span>#</span></div>`;
   else h += `<div class="headband"><span>${list.length}절</span>${list.length >= 2 && list.length <= 15 ? `<button class="hb-btn" type="button" data-act="studyList">이 구간 연구 노트</button>` : "<span>#</span>"}</div>`;
-  if (state.pad === "kateta") h += `<div class="kateta-top">${commChips(curComm(), "pad")}<p class="small">영어 주석은 인터넷에서 불러옵니다(무료 공개 자료). 한 번 본 장은 휴대폰에 저장됩니다.</p></div>`;
+  if (state.pad === "kateta") h += `<div class="kateta-top">${commChips(curComm(), "pad")}${isUserComm(curComm()) ? "" : `<p class="small">영어 주석은 인터넷에서 불러와 한국어로 번역합니다. 한 번 본 장은 휴대폰에 저장됩니다.</p>`}</div>`;
   h += `<div class="list-wrap">`;
   let lastBook = 0;
   for (const [b, c, v] of list) {
@@ -309,7 +310,7 @@ async function drawList(scrollKey) {
     const ot = isOT(b);
     const prefix = multiBook || state.mode !== "chapter" ? `${BOOKS[b-1][1]} ${c}:${v}` : `${c}:${v}`;
     h += `<article class="verse" id="r${key}" data-k="${key}">
-      <div class="vrow"><div class="vtext">${title ? `<span class="ps-title">${esc(title)}</span>` : ""}<span class="vref">${prefix}</span>${th}${state.reasons && state.reasons.get(key) ? `<span class="why">${state.reasons.get(key).slice(0, 4).map(r => `<i>${esc(r)}</i>`).join("")}</span>` : ""}</div>
+      <div class="vrow"><div class="vtext">${title ? `<span class="ps-title">${esc(title)}</span>` : ""}<span class="vref">${prefix}</span>${th}${k && k.n ? `<span class="vnote">${esc(k.n)}</span>` : ""}${state.reasons && state.reasons.get(key) ? `<span class="why">${state.reasons.get(key).slice(0, 4).map(r => `<i>${esc(r)}</i>`).join("")}</span>` : ""}</div>
       <div class="vside"><span class="vnum">${v}</span><button class="enbtn" type="button" data-tool="en" data-k="${key}" aria-pressed="false" aria-label="대조 역본">${esc(verName(state.cmp, true)).slice(0, 3)}</button></div></div>
       <div class="vtools">
         <button class="vt ${ot ? "he" : "gr"}" type="button" data-tool="orig" data-k="${key}" aria-pressed="false" aria-label="원어">${ot ? "א" : "α"}</button>
@@ -395,7 +396,7 @@ async function togglePanel(article, tool, key, forceOpen) {
         const cls = "w" + (w[6] === 2 ? " var" : "") + (w[6] === 1 ? " ttl" : "");
         h += `<button class="${cls}" type="button" data-w="${i}">${w[6] === 2 ? "[" + esc(w[0]) + "]" : esc(w[0])}<span class="kp">${esc(korOf(w, b))}</span><span class="g">${esc(koOr(koWord(w, b), w[2]))}</span></button>`;
       }
-      div.innerHTML = h + `</div>`;
+      div.innerHTML = h + `</div>` + await sdbHTML(b, c, v);
     }
   } else if (tool === "comm") {
     div.innerHTML = await commPanelHTML(b, c, v);
@@ -728,6 +729,7 @@ function relKo(rel) {
 async function showLex(s) {
   const lang = s[0];
   const [lex, conc] = await Promise.all([loadLex(lang), loadConc(lang).catch(() => ({}))]);
+  if (!lex[s]) { const alt = Object.keys(lex).find(k => k.startsWith(s) && /^[A-Z]?$/.test(k.slice(s.length))); if (alt) s = alt; }
   const h = lexCard(lex, s, lang, conc) +
     `<div class="actions"><button class="btn" type="button" data-conc="${esc(s)}">용례 ${(conc[s] || []).length}곳 보기</button></div>`;
   openSheet(`${s} · ${koOr(GKO[s], lex[s] ? lex[s][3] : "")}`, h, { push: true });
@@ -825,11 +827,16 @@ async function showSettings() {
     <input type="file" id="bdbFile" accept=".bdb,.db,.sqlite,.sqlite3,application/octet-stream">
     <div class="progress" hidden id="impProg"><span></span></div><p class="small" id="impMsg"></p>
     ${meta ? `<div><button class="btn plain" type="button" data-act="delkor">이 역본 지우기</button></div>` : ""}</div>
+  <div class="card"><h3>한국어 주석 · 원전분해</h3>
+    <p class="hint">갖고 계신 주석 파일(.cdb)이나 원전분해 파일(.sdb)을 고르세요. 여러 개를 한꺼번에 골라도 됩니다. 이 기기 안에만 저장됩니다. 주석은 '주' 버튼과 카테타 패드에, 원전분해는 원어(א·α) 버튼에 나옵니다.</p>
+    ${UCOMMS.length ? `<div class="list">${UCOMMS.map(u => `<div class="row"><b>${esc(u.name)}</b><span class="small">${u.kind === "sdb" ? "원전분해" : "주석"} · ${u.count.toLocaleString()}개</span><button class="linklike" type="button" data-delcomm="${esc(u.id)}">지우기</button></div>`).join("")}</div>` : ""}
+    <input type="file" id="commFile" multiple accept=".cdb,.sdb,application/octet-stream">
+    <div class="progress" hidden id="cmProg"><span></span></div><p class="small" id="cmMsg"></p></div>
   <div class="card"><h3>다른 역본 추가</h3>
-    <p class="hint">새번역, 쉬운성경, NIV처럼 갖고 계신 다른 .bdb 파일도 더 넣을 수 있습니다. 위쪽 역본 칸에서 골라 보거나 대조할 수 있습니다.</p>
+    <p class="hint">새번역, 흠정역, 다른 나라 말 성경처럼 갖고 계신 다른 .bdb 파일도 넣을 수 있습니다. 여러 개를 한꺼번에 고르면 파일 이름이 역본 이름이 됩니다. 위쪽 역본 칸에서 골라 보거나 대조할 수 있습니다.</p>
     ${UVERS.length ? `<div class="list">${UVERS.map(u => `<div class="row"><b>${esc(u.name)}</b><span class="small">${u.count.toLocaleString()}절</span><button class="linklike" type="button" data-delver="${esc(u.id)}">지우기</button></div>`).join("")}</div>` : ""}
     <label class="field"><span class="small">역본 이름</span><input type="text" id="addName" placeholder="예: 새번역"></label>
-    <input type="file" id="addFile" accept=".bdb,.db,.sqlite,.sqlite3,application/octet-stream">
+    <input type="file" id="addFile" multiple accept=".bdb,.cdb,.sdb,.db,.sqlite,.sqlite3,application/octet-stream">
     <div class="progress" hidden id="addProg"><span></span></div><p class="small" id="addMsg"></p></div>
   ${backupCard()}
   <div class="card"><h3>오프라인 저장</h3>
@@ -845,7 +852,7 @@ async function showSettings() {
   openSheet("설정", h, { full: true });
 }
 
-async function importBdb(file, target = "my") {
+async function importBdb(file, target = "my", label0 = "") {
   const pre = target === "my" ? "imp" : "add";
   const msg = $("#" + pre + "Msg"), prog = $("#" + pre + "Prog"), bar = prog.querySelector("span");
   prog.hidden = false; bar.style.width = "10%"; msg.textContent = "파일을 여는 중…";
@@ -875,11 +882,15 @@ async function importBdb(file, target = "my") {
       const tm = x.match(/^\s*<font[^>]*>(.*?)<\/font>\s*(?:<br\s*\/?>)?/i);
       if (tm) { t = tm[1].replace(/<[^>]+>/g, "").trim(); x = x.slice(tm[0].length); }
       x = x.replace(/<br\s*\/?>/gi, " ").replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim();
-      ((byBook[bn] ||= {})[c] ||= {})[v] = t ? { x, t } : { x };
+      // 새번역처럼 "본문 / ①또는 …" 형태의 각주는 따로 떼어 둔다
+      let n = ""; const fm = x.match(/^(.*?)\s+\/\s+([①-⑳].*)$/);
+      if (fm) { x = fm[1].replace(/[①-⑳]/g, "").trim(); n = fm[2].trim(); }
+      const o = { x }; if (t) o.t = t; if (n) o.n = n;
+      ((byBook[bn] ||= {})[c] ||= {})[v] = o;
       count++;
     }
     bar.style.width = "70%"; msg.textContent = `${count.toLocaleString()}절을 저장하는 중…`;
-    const label = ($("#" + pre + "Name")?.value || "").trim() || (target === "my" ? "개역개정" : file.name.replace(/\.[^.]+$/, ""));
+    const label = label0 || ($("#" + pre + "Name")?.value || "").trim() || (target === "my" ? "개역개정" : file.name.replace(/\.[^.]+$/, ""));
     if (target === "my") {
       await idb.clear("kor");
       for (const bn of Object.keys(byBook)) await idb.put("kor", +bn, byBook[bn]);
@@ -889,7 +900,7 @@ async function importBdb(file, target = "my") {
       const id = "v" + Date.now().toString(36);
       for (const bn of Object.keys(byBook)) await idb.put("vtext", id + ":" + bn, byBook[bn]);
       UVERS.push({ id, name: label, count, at: Date.now() }); await idb.put("meta", "uvers", UVERS);
-      state.ver = "u:" + id;
+      if (!label0) state.ver = "u:" + id; // 여러 개를 한꺼번에 넣을 때는 지금 보던 역본을 그대로 둔다
     }
     store.set("ver", state.ver); verCache.clear(); fillVerSel();
     bar.style.width = "100%"; msg.textContent = `완료: ${label} ${count.toLocaleString()}절을 불러왔습니다.`;
@@ -897,6 +908,59 @@ async function importBdb(file, target = "my") {
     showChapter(state.b, state.c);
   } catch (e) {
     msg.textContent = "불러오지 못했습니다: " + e.message; bar.style.width = "0";
+  }
+}
+
+// 여러 파일을 한꺼번에: .cdb(주석)·.sdb(원전분해)는 주석으로, 나머지(.bdb 등)는 역본으로
+async function importFiles(files) {
+  const list = [...files];
+  for (const f of list) {
+    const ext = (f.name.match(/\.([^.]+)$/) || [, ""])[1].toLowerCase();
+    if (ext === "cdb" || ext === "sdb") await importComm(f);
+    else await importBdb(f, "new", list.length > 1 ? f.name.replace(/\.[^.]+$/, "") : "");
+  }
+  if (list.length > 1) toast(`${list.length}개 파일을 모두 불러왔습니다`);
+}
+async function importComm(file) {
+  const msg = $("#cmMsg") || $("#addMsg"), prog = $("#cmProg") || $("#addProg"), bar = prog.querySelector("span");
+  const name = file.name.replace(/\.[^.]+$/, "");
+  prog.hidden = false; bar.style.width = "5%"; msg.textContent = `${name}: 파일을 여는 중… (큰 파일은 1분쯤 걸립니다)`;
+  try {
+    if (!window.initSqlJs) throw new Error("SQLite 도구를 불러오지 못했습니다. 인터넷 연결 후 다시 시도해 주세요.");
+    const SQL = await initSqlJs({ locateFile: f => "vendor/" + f });
+    const db = new SQL.Database(new Uint8Array(await file.arrayBuffer()));
+    const tables = db.exec("select name from sqlite_master where type='table'")[0]?.values.map(r => r[0]) || [];
+    let found = null;
+    for (const t of tables) {
+      const cols = db.exec(`pragma table_info("${t}")`)[0]?.values.map(r => String(r[1])) || [];
+      const pick = re => cols.find(c => re.test(c));
+      const cb = pick(/^(book|bk|book_?num(ber)?)$/i), cc = pick(/^(chapter|ch|chap)$/i), cv = pick(/^(verse|vs|vn)$/i);
+      const ct = pick(/^(btext|text|content|comments?|verse_?text)$/i);
+      if (cb && cc && cv && ct) { found = { t, cb, cc, cv, ct }; break; }
+    }
+    if (!found) { db.close(); throw new Error("책·장·절·내용 표를 찾지 못했습니다."); }
+    const kind = /\.sdb$/i.test(file.name) ? "sdb" : "cdb";
+    const id = "c" + Date.now().toString(36);
+    let count = 0;
+    for (let bn = 1; bn <= 66; bn++) {
+      const r = db.exec(`select "${found.cc}","${found.cv}","${found.ct}" from "${found.t}" where "${found.cb}"=${bn} order by "${found.cc}","${found.cv}"`)[0];
+      if (!r) continue;
+      const book = {};
+      for (const [c, v, raw] of r.values) {
+        const x = String(raw ?? "").trim(); if (!x) continue;
+        const ch = (book[c] ||= {}); ch[v] = ch[v] ? ch[v] + "<br><br>" + x : x; count++;
+      }
+      await idb.put("vtext", `c_${id}:${bn}`, book);
+      bar.style.width = (5 + bn / 66 * 93).toFixed(0) + "%"; msg.textContent = `${name}: ${BOOKS[bn-1][0]}까지 저장했습니다…`;
+    }
+    db.close();
+    UCOMMS.push({ id, name, kind, count, at: Date.now() }); await idb.put("meta", "ucomms", UCOMMS);
+    if (kind === "cdb" && !isUserComm(store.get("comm", ""))) store.set("comm", "u:" + id);
+    commCache.clear();
+    bar.style.width = "100%"; msg.textContent = `완료: ${name} ${count.toLocaleString()}개 항목을 불러왔습니다.`;
+    toast(`${name}을(를) 불러왔습니다`);
+  } catch (e) {
+    msg.textContent = `${name}을(를) 불러오지 못했습니다: ` + e.message; bar.style.width = "0";
   }
 }
 
@@ -928,14 +992,14 @@ const PADS = {
 };
 const loadLxx = b => getJSON(`data/lxx/${String(b).padStart(2, "0")}.json`);
 
-const APP_VER = "17";
+const APP_VER = "18";
 function showMenu() {
   const items = [["home", "⌂", "본문 (홈)"], ["inter", "≡", "인터리니어 패드"], ["tts", "♪", "TTS 패드"], ["copy", "✍", "필사 패드"], ["kateta", "❝", "카테타 패드 (주석)"], ["names", "☺", "인물·지명 사전"], ["cards", "▣", "암송 카드"], ["osearch", "ℵ", "원어로 찾기"],
     ["plan", "▦", "연간 읽기표"], ["notes", "✎", "묵상 노트"], ["marks", "⚑", "저장 목록 (북마크)"]];
   const h = `<nav class="menu">${items.map(([k, i, n]) => `<button type="button" class="${state.pad === k ? "cur" : ""}" data-pad="${k}"><span class="mi">${i}</span>${n}</button>`).join("")}
     <hr><button type="button" data-act="settings"><span class="mi">⚙</span>설정</button></nav>
     <p class="small">원어: STEPBible.org · 70인역: Swete (First1KGreek) · 관주: OpenBible.info · 영어: KJV · 주석: Free Use Bible API</p>
-    <p class="small">앱 버전 ${APP_VER} (주석·사전 한국어 번역)</p>`;
+    <p class="small">앱 버전 ${APP_VER} (한국어 주석 파일 불러오기)</p>`;
   openSheet("원어서재", h, { side: true });
 }
 function setPad(p) {
@@ -955,7 +1019,10 @@ const COMMS = [
 ];
 const USFM = "GEN EXO LEV NUM DEU JOS JDG RUT 1SA 2SA 1KI 2KI 1CH 2CH EZR NEH EST JOB PSA PRO ECC SNG ISA JER LAM EZK DAN HOS JOL AMO OBA JON MIC NAM HAB ZEP HAG ZEC MAL MAT MRK LUK JHN ACT ROM 1CO 2CO GAL EPH PHP COL 1TH 2TH 1TI 2TI TIT PHM HEB JAS 1PE 2PE 1JN 2JN 3JN JUD REV".split(" ");
 const commCache = new Map();
-const curComm = () => store.get("comm", "john-gill");
+const allComms = () => [...UCOMMS.filter(u => u.kind === "cdb").map(u => ["u:" + u.id, u.name]), ...COMMS];
+const commName = id => (allComms().find(x => x[0] === id) || ["", id])[1];
+const curComm = () => { const s = store.get("comm", null), all = allComms(); return all.some(x => x[0] === s) ? s : all[0][0]; };
+const isUserComm = id => String(id).startsWith("u:");
 
 // 주석 본문 조각(문자열, {text}, {content:[...]}, 줄바꿈 등)을 글자로 이어 붙인다
 function flat(x) {
@@ -973,6 +1040,10 @@ async function loadComm(id, b, c) {
   const key = `${id}/${b}/${c}`;
   if (commCache.has(key)) return commCache.get(key);
   const p = (async () => {
+    if (isUserComm(id)) {
+      const d = await idb.get("vtext", `c_${id.slice(2)}:${b}`);
+      return d && d[c] ? { intro: "", v: d[c], html: true } : { none: true };
+    }
     const r = await fetch(`https://bible.helloao.org/api/c/${id}/${USFM[b-1]}/${c}.json`);
     if (r.status === 404) return { none: true };
     if (!r.ok) throw new Error("HTTP " + r.status);
@@ -988,20 +1059,63 @@ async function loadComm(id, b, c) {
   commCache.set(key, p);
   try { return await p; } catch (e) { commCache.delete(key); throw e; }
 }
+// 원전분해(.sdb): "[단어] (기본 <WH7225> [기본형] 발음)@문법 # 뜻*" 줄을 표로
+const SDBRE = /^\[(.+?)\]\s*\(기본\s*<W([HG])(\d+)>\s*\[(.*?)\]\s*(.*?)\)\s*@(.*?)\s*#\s*(.*?)\*?$/;
+async function sdbHTML(b, c, v) {
+  let h = "";
+  for (const u of UCOMMS.filter(u => u.kind === "sdb")) {
+    let raw = ""; try { const d = await idb.get("vtext", `c_${u.id}:${b}`); raw = d && d[c] && d[c][v] || ""; } catch {}
+    if (!raw) continue;
+    const cls = isOT(b) ? "he" : "gr";
+    const rows = String(raw).split(/\r?\n|<br\s*\/?>/i).map(x => x.trim()).filter(Boolean).map(line => {
+      const m = line.match(SDBRE);
+      if (!m) return `<div class="sdb-row"><span class="sdb-m">${esc(line)}</span></div>`;
+      const [, w, L, n, lem, pron, morph, mean] = m, s = L + n.padStart(4, "0");
+      return `<div class="sdb-row"><span class="sdb-w ${cls}" ${cls === "he" ? 'dir="rtl"' : ""}>${esc(w)}</span><span class="sdb-mean">${esc(mean === "_" ? "—" : mean)}</span>
+        <span class="sdb-sub"><button class="linklike" type="button" data-lex="${esc(s)}">${esc(lem)} ${esc(pron)} · ${esc(s)}</button> · ${esc(morph)}</span></div>`;
+    }).join("");
+    h += `<details class="sdb" open><summary>${esc(u.name)}</summary>${rows}</details>`;
+  }
+  return h;
+}
 // 이 절에 해당하는 주석 (주석이 여러 절을 묶어 앞 절에 달려 있으면 그 절을 찾아 올라간다)
 function commFor(ch, v) {
   if (ch.v[v]) return { from: v, text: ch.v[v] };
-  for (let x = v - 1; x >= 1 && x >= v - 6; x--) if (ch.v[x]) return { from: x, text: ch.v[x], shared: true };
+  for (let x = v - 1; x >= 1 && x >= v - (ch.html ? 200 : 6); x--) if (ch.v[x]) return { from: x, text: ch.v[x], shared: true };
   return null;
 }
 function commChips(sel, scope) {
   const on = store.get("commAutoKo", true);
-  return `<div class="chips comm-chips" role="group" aria-label="주석 선택">${COMMS.map(([id, ko]) =>
+  return `<div class="chips comm-chips" role="group" aria-label="주석 선택">${allComms().map(([id, ko]) =>
     `<button class="chip" type="button" data-comm="${id}" data-scope="${scope}" aria-pressed="${id === sel}">${esc(ko)}</button>`).join("")}
-    <button class="chip tr-chip" type="button" data-act="commAutoKo" aria-pressed="${on}">${on ? "자동 번역 켜짐" : "자동 번역 꺼짐"}</button></div>`;
+    ${isUserComm(sel) ? "" : `<button class="chip tr-chip" type="button" data-act="commAutoKo" aria-pressed="${on}">${on ? "자동 번역 켜짐" : "자동 번역 꺼짐"}</button>`}</div>`;
 }
 const gtrans = t => `https://translate.google.com/?sl=en&tl=ko&op=translate&text=${encodeURIComponent(t.slice(0, 4500))}`;
-function commBlock(name, ref, text, shared) {
+// 불러온 주석의 서식: 굵게·기울임·밑줄·줄바꿈·글자색만 살리고 나머지는 글자로 보여 준다
+const TAGRE = /<\s*(\/?)\s*(b|strong|i|em|u|br|p|font)\b([^>]*)>/gi;
+const FCOL = { navy: "key", darkblue: "key", maroon: "red", red: "red", "#996699": "title", green: "green", gray: "dim", dimgray: "dim", goldenrod: "gold" };
+const escT = t => t.replace(/&(?!#?\w+;)/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\r?\n/g, "<br>");
+function safeHTML(raw) {
+  raw = String(raw || ""); let out = "", last = 0, m; TAGRE.lastIndex = 0;
+  while ((m = TAGRE.exec(raw))) {
+    out += escT(raw.slice(last, m.index)); last = TAGRE.lastIndex;
+    const close = m[1], tag = m[2].toLowerCase();
+    if (tag === "br") out += "<br>";
+    else if (tag === "font") {
+      if (close) out += "</span>";
+      else { const col = ((m[3].match(/color\s*=\s*["']?([#\w]+)/i) || [])[1] || "").toLowerCase(); out += `<span class="fc-${FCOL[col] || "n"}">`; }
+    } else out += `<${close}${{ strong: "b", em: "i" }[tag] || tag}>`;
+  }
+  return out + escT(raw.slice(last));
+}
+const plainHTML = t => String(t || "").replace(/<br\s*\/?>|<\/p>/gi, " ").replace(/<[^>]+>/g, "").replace(/&nbsp;/g, " ").replace(/\s+/g, " ").trim();
+function commBlock(name, ref, text, shared, html) {
+  if (html) {
+    const long = text.length > 1500;
+    return `<div class="comm ucomm"><p class="comm-src">${esc(name)} · ${esc(ref)}${shared ? " (앞 절부터 이어지는 주석)" : ""}</p>
+      <div class="comm-text uhtml${long ? " clip" : ""}">${safeHTML(text)}</div>
+      ${long ? `<div class="row"><button class="linklike" type="button" data-act="commmore">전체 보기</button></div>` : ""}</div>`;
+  }
   const long = text.length > 700;
   return `<div class="comm" data-en="${esc(text)}"><p class="comm-src">${esc(name)} · ${esc(ref)}${shared ? " (앞 절과 묶인 주석)" : ""}</p>
     <div class="comm-text${long ? " clip" : ""}">${esc(text)}</div>
@@ -1080,25 +1194,26 @@ async function autoKo(root) {
 }
 // 절 아래 패널
 async function commPanelHTML(b, c, v) {
-  const id = curComm(), name = COMMS.find(x => x[0] === id)[1];
+  const id = curComm(), name = commName(id);
   let h = `<h4>카테타 · 주석</h4>${commChips(id, "panel")}`;
   try {
     const ch = await loadComm(id, b, c);
     const hit = !ch.none && commFor(ch, v);
-    h += hit ? commBlock(name, `${BOOKS[b-1][1]} ${c}:${hit.from}`, hit.text, hit.shared) : `<p class="small">${esc(name)} 주석에는 이 절(또는 이 책)에 대한 내용이 없습니다. 다른 주석을 골라 보세요.</p>`;
-  } catch {
+    h += hit ? commBlock(name, `${BOOKS[b-1][1]} ${c}:${hit.from}`, hit.text, hit.shared, ch.html) : `<p class="small">${esc(name)} 주석에는 이 절(또는 이 책)에 대한 내용이 없습니다. 다른 주석을 골라 보세요.</p>`;
+  } catch (e) {
+    if (isUserComm(id)) { h += `<p class="small">주석을 읽지 못했습니다: ${esc(e.message || "")}</p>`; return h; }
     h += `<p class="small">주석은 인터넷에서 불러옵니다. 연결을 확인한 뒤 다시 눌러 주세요. 한 번 본 장은 이 휴대폰에 저장되어 인터넷 없이도 보입니다.</p>`;
   }
   return h;
 }
 // 카테타 패드: 절마다 주석을 이어서 보여준다
 async function katetaHTML(b, c, v) {
-  const id = curComm(), name = COMMS.find(x => x[0] === id)[1];
+  const id = curComm(), name = commName(id);
   try {
     const ch = await loadComm(id, b, c);
     if (ch.none) return v === 1 ? `<p class="small">${esc(name)} 주석은 ${esc(BOOKS[b-1][0])}을(를) 다루지 않습니다.</p>` : "";
     const intro = v === 1 && ch.intro ? commBlock(name, `${BOOKS[b-1][1]} ${c}장 서론`, ch.intro) : "";
-    return intro + (ch.v[v] ? commBlock(name, `${BOOKS[b-1][1]} ${c}:${v}`, ch.v[v]) : "");
+    return intro + (ch.v[v] ? commBlock(name, `${BOOKS[b-1][1]} ${c}:${v}`, ch.v[v], false, ch.html) : "");
   } catch {
     return v === 1 ? `<p class="small">주석을 불러오지 못했습니다. 인터넷 연결을 확인해 주세요.</p>` : "";
   }
@@ -1373,13 +1488,14 @@ async function buildStudy(keys) {
   const n0 = lang === "H" ? 6 : 5;
   md += `\n## ${n0}. 주석 점검\n\n`;
   try {
-    const id = curComm(), name = COMMS.find(x => x[0] === id)[1];
+    const id = curComm(), name = commName(id);
     const [b, c, v] = fromKey(keys[0]);
     const ch = await loadComm(id, b, c);
     const hit = !ch.none && commFor(ch, v);
     if (hit) {
-      const en = hit.text.replace(/\s+/g, " ").slice(0, 600) + (hit.text.length > 600 ? "…" : "");
-      let ko = ""; if (store.get("commAutoKo", true)) { try { ko = await translateKo(en); } catch {} }
+      const src = ch.html ? plainHTML(hit.text) : hit.text.replace(/\s+/g, " ");
+      const en = src.slice(0, 600) + (src.length > 600 ? "…" : "");
+      let ko = ""; if (!ch.html && store.get("commAutoKo", true)) { try { ko = await translateKo(en); } catch {} }
       md += `- **${name}** (${BOOKS[b-1][1]} ${c}:${hit.from}) ${ko ? ko + "\n  - (기계 번역 · 원문) " + en : en}\n`;
     } else md += `- ${name}: 이 본문 주석 없음\n`;
   } catch { md += `- (인터넷 연결 시 주석이 들어갑니다)\n`; }
@@ -1884,6 +2000,12 @@ document.addEventListener("click", async e => {
     UVERS = UVERS.filter(u => u.id !== d.delver); await idb.put("meta", "uvers", UVERS);
     verCache.clear(); fillVerSel(); toast("역본을 지웠습니다"); sheetStack = []; hideSheet(); return showChapter(state.b, state.c);
   }
+  if (d.delcomm) {
+    if (t.dataset.confirm !== "1") { t.dataset.confirm = "1"; t.textContent = "한 번 더 누르면 지웁니다"; return; }
+    for (let b = 1; b <= 66; b++) await idb.del("vtext", `c_${d.delcomm}:${b}`);
+    UCOMMS = UCOMMS.filter(u => u.id !== d.delcomm); await idb.put("meta", "ucomms", UCOMMS);
+    commCache.clear(); toast("지웠습니다"); sheetStack = []; hideSheet(); return showChapter(state.b, state.c);
+  }
   if (d.deck) return showCards(d.deck);
   if (d.grade !== undefined) return gradeCard(+d.grade);
   if (d.addcard) { addCard(d.addcard, d.cw || "", d.cref || ""); return; }
@@ -1988,7 +2110,8 @@ $("#kw").addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDe
 document.addEventListener("change", e => {
   const id = e.target.id;
   if (id === "bdbFile" && e.target.files[0]) return importBdb(e.target.files[0], "my");
-  if (id === "addFile" && e.target.files[0]) return importBdb(e.target.files[0], "new");
+  if (id === "addFile" && e.target.files.length) return importFiles(e.target.files);
+  if (id === "commFile" && e.target.files.length) return importFiles(e.target.files);
   if (id === "verSel" || id === "cmpSel") {
     state[id === "verSel" ? "ver" : "cmp"] = e.target.value; store.set(id === "verSel" ? "ver" : "cmp", e.target.value);
     $("#allEn").textContent = verName(state.cmp, true);
@@ -2022,6 +2145,7 @@ function applyFs() { document.documentElement.style.setProperty("--fs", state.fs
   try {
     const km = await idb.get("meta", "kor"); state.hasKor = !!km; if (km && km.label) MYNAME = km.label;
     UVERS = (await idb.get("meta", "uvers")) || [];
+    UCOMMS = (await idb.get("meta", "ucomms")) || [];
     await loadNotes();
   } catch (e) { console.warn(e); }
   if (!state.ver) state.ver = state.hasKor ? "my" : "krv";

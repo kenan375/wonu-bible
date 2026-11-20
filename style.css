@@ -297,3 +297,28 @@ a.btn{text-decoration:none;display:inline-block}
 .tr-note{color:var(--muted);font-weight:400}
 .comm[data-lang="ko"] .comm-text{font-family:var(--f-ko);font-size:calc(var(--fs) * .8)}
 .tr-chip[aria-pressed="true"]{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+/* 불러온 한국어 주석 */
+.comm-text.uhtml{white-space:normal;font-family:var(--f-ko);font-size:calc(var(--fs) * .82);line-height:1.75;word-break:keep-all}
+.comm-text.uhtml.clip{max-height:16em}
+.uhtml p{margin:0 0 .6em}
+.uhtml .fc-key{color:var(--accent)}
+.uhtml .fc-title{color:#c99bd6;font-weight:700}
+.uhtml .fc-red{color:#e08a7a}
+.uhtml .fc-green{color:#8cc58a}
+.uhtml .fc-gold{color:#d8b45a}
+.uhtml .fc-dim{color:var(--muted)}
+:root[data-theme="light"] .uhtml .fc-title{color:#7a3d8a}
+:root[data-theme="light"] .uhtml .fc-red{color:#a33a26}
+:root[data-theme="light"] .uhtml .fc-green{color:#2f7a2c}
+:root[data-theme="light"] .uhtml .fc-gold{color:#8a6410}
+/* 원전분해 */
+.sdb{margin-top:10px;border-top:1px solid var(--line);padding-top:8px}
+.sdb summary{cursor:pointer;font-size:.8rem;font-weight:700;color:var(--accent);letter-spacing:.04em;padding:4px 0}
+.sdb-row{display:grid;grid-template-columns:auto minmax(0,1fr);gap:0 10px;padding:4px 0;border-bottom:1px dashed var(--line);align-items:baseline}
+.sdb-w{font-size:calc(var(--fs) * .95)}
+.sdb-mean{font-family:var(--f-ko);font-weight:700}
+.sdb-sub{grid-column:1 / -1;font-size:.8rem;color:var(--muted)}
+.sdb-sub .linklike{font-size:.8rem}
+.sdb-m{grid-column:1 / -1;font-size:.85rem;color:var(--muted)}
+/* 역본 각주 (새번역 등) */
+.vnote{display:block;margin-top:4px;font-size:.78em;color:var(--muted);line-height:1.5}
