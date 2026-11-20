@@ -285,3 +285,10 @@ a.btn{text-decoration:none;display:inline-block}
 
 .olem.he{font-family:var(--f-he);color:var(--he);font-size:1.15rem}
 .olem.gr{font-family:var(--f-gr);color:var(--gr);font-size:1.1rem}
+
+/* 역본 선택 */
+.verrow{display:grid;grid-template-columns:2.6em minmax(0,1fr) 2.6em minmax(0,1fr);gap:6px;align-items:center}
+.verrow .rlabel{font-size:.8rem;color:var(--muted);text-align:right}
+.verrow select{padding:8px 6px;min-width:0}
+.vk-cmp{font-family:var(--f-ko);font-size:calc(var(--fs) * .92);line-height:1.7}
+@media (max-width:380px){.verrow{grid-template-columns:2.4em minmax(0,1fr) 2.4em minmax(0,1fr)}}

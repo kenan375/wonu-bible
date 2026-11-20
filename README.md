@@ -19,7 +19,7 @@ https://github.com/STEPBible/STEPBible-Data
 
 70인역: **Swete 판** (Open Greek and Latin First1KGreek, nathans/lxx-swete), [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/). 장절을 개역개정에 맞춰 다시 배열했고, 문법 분해는 신약 같은 형태에서 추정한 값입니다. 이 70인역 파생 데이터(data/lxx)는 CC BY-SA 4.0으로 공개합니다.
 
-영어 성경: **KJV** (퍼블릭 도메인).
+역본: **개역한글(1961)** — 발행 후 50년 보호 기간 만료, **KJV·ASV·YLT·Darby·BSB** — 퍼블릭 도메인 (scrollmapper/bible_databases 경유). 개역개정 등 저작권이 있는 역본은 저장소에 없고, 사용자가 자기 기기에서 불러옵니다.
 
 영어 주석(카테타 패드): 존 길, 칼빈, 매튜 헨리, 아담 클라크, JFB, 카일-델리취 — 퍼블릭 도메인. 앱이 [Free Use Bible API](https://bible.helloao.org)에서 필요할 때 불러옵니다(저장소에는 포함하지 않음).
 
