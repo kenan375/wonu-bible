@@ -713,7 +713,7 @@ function lexCard(lex, s, lang, conc) {
   if (def) {
     const lxx = (def.match(/\[in LXX[^\]]*\]/) || [])[0];
     if (lxx) h += `<p class="tip small"><b>70인역</b> ${esc(lxx.replace(/^\[|\]$/g, ""))}</p>`;
-    h += `<div class="def" id="def">${esc(def)}</div><div><button class="linklike" type="button" data-act="moredef">전체 보기</button></div>`;
+    h += `<div class="trbox" data-en="${esc(def)}"><p class="small tr-head">뜻풀이</p><div class="def" id="def">${esc(def)}</div><div class="row">${trBtn()}<button class="linklike" type="button" data-act="moredef">전체 보기</button></div></div>`;
   }
   if (conc && conc[s]) h += `<p class="small">성경 전체 ${conc[s].length}절에 나옵니다.</p>`;
   return h + `</div>`;
@@ -928,14 +928,14 @@ const PADS = {
 };
 const loadLxx = b => getJSON(`data/lxx/${String(b).padStart(2, "0")}.json`);
 
-const APP_VER = "16";
+const APP_VER = "17";
 function showMenu() {
   const items = [["home", "⌂", "본문 (홈)"], ["inter", "≡", "인터리니어 패드"], ["tts", "♪", "TTS 패드"], ["copy", "✍", "필사 패드"], ["kateta", "❝", "카테타 패드 (주석)"], ["names", "☺", "인물·지명 사전"], ["cards", "▣", "암송 카드"], ["osearch", "ℵ", "원어로 찾기"],
     ["plan", "▦", "연간 읽기표"], ["notes", "✎", "묵상 노트"], ["marks", "⚑", "저장 목록 (북마크)"]];
   const h = `<nav class="menu">${items.map(([k, i, n]) => `<button type="button" class="${state.pad === k ? "cur" : ""}" data-pad="${k}"><span class="mi">${i}</span>${n}</button>`).join("")}
     <hr><button type="button" data-act="settings"><span class="mi">⚙</span>설정</button></nav>
     <p class="small">원어: STEPBible.org · 70인역: Swete (First1KGreek) · 관주: OpenBible.info · 영어: KJV · 주석: Free Use Bible API</p>
-    <p class="small">앱 버전 ${APP_VER} (주석 한국어 번역)</p>`;
+    <p class="small">앱 버전 ${APP_VER} (주석·사전 한국어 번역)</p>`;
   openSheet("원어서재", h, { side: true });
 }
 function setPad(p) {
@@ -1058,14 +1058,15 @@ async function translateKo(t) {
   try { await idb.put("meta", key, ko); } catch {}
   return ko;
 }
+const trBtn = () => `<button class="btn plain sm" type="button" data-act="commko">한국어로 보기</button>`;
 async function commToKo(box, btn) {
-  const el = box.querySelector(".comm-text"), en = box.dataset.en;
+  const el = box.querySelector(".comm-text, .def"), en = box.dataset.en;
   if (box.dataset.lang === "ko") { el.textContent = en; box.dataset.lang = "en"; if (btn) btn.textContent = "한국어로 보기"; return; }
   if (btn) { btn.disabled = true; btn.textContent = "번역 중…"; }
   try {
     const ko = await translateKo(en);
     el.textContent = ko; box.dataset.lang = "ko";
-    if (!box.querySelector(".tr-note")) box.querySelector(".comm-src").insertAdjacentHTML("beforeend", ` <span class="tr-note">· 기계 번역</span>`);
+    if (!box.querySelector(".tr-note")) box.querySelector(".comm-src, .tr-head").insertAdjacentHTML("beforeend", ` <span class="tr-note">· 기계 번역</span>`);
     if (btn) btn.textContent = "영어 원문 보기";
   } catch (e) {
     if (btn) btn.textContent = "한국어로 보기";
@@ -1075,7 +1076,7 @@ async function commToKo(box, btn) {
 // '자동 번역'을 켜 두면 화면에 나온 주석을 차례로 한국어로 바꿉니다
 async function autoKo(root) {
   if (!store.get("commAutoKo", true)) return;
-  for (const box of (root || document).querySelectorAll(".comm:not([data-lang])")) await commToKo(box, box.querySelector('[data-act="commko"]'));
+  for (const box of (root || document).querySelectorAll("[data-en]:not([data-lang])")) await commToKo(box, box.querySelector('[data-act="commko"]'));
 }
 // 절 아래 패널
 async function commPanelHTML(b, c, v) {
@@ -1515,8 +1516,8 @@ async function showName(id, push = true) {
     ${first ? `<p class="small">처음 나오는 곳: <button class="linklike" type="button" data-go="${fromKey(first).join(".")}">${esc(refStr(...fromKey(first)))}</button></p>` : ""}
     <div class="actions"><button class="btn" type="button" data-namerefs="${esc(id)}">모든 구절 보기</button>${e.map ? `<a class="btn ghost" href="${esc(e.map)}" target="_blank" rel="noopener">지도에서 보기</a>` : ""}</div></div>`;
   const en = e.a || e.sh;
-  if (en) h += `<div class="card"><h3>해설 (영어)</h3><div class="def" id="def">${esc(en)}</div>
-    <div class="row"><button class="linklike" type="button" data-act="moredef">전체 보기</button><a class="linklike" href="https://translate.google.com/?sl=en&tl=ko&op=translate&text=${encodeURIComponent(en.slice(0, 4500))}" target="_blank" rel="noopener">한국어로 번역 (구글)</a></div></div>`;
+  if (en) h += `<div class="card trbox" data-en="${esc(en)}"><h3 class="tr-head">해설</h3><div class="def" id="def">${esc(en)}</div>
+    <div class="row">${trBtn()}<button class="linklike" type="button" data-act="moredef">전체 보기</button></div></div>`;
   h += `<p class="small">자료: STEPBible.org TIPNR (CC BY 4.0)</p>`;
   openSheet(`${NTYPE[e.t]} · ${nameKo(id)}`, h, { push, full: true });
 }
@@ -1838,12 +1839,15 @@ function openSheet(title, html, opts = {}) {
   $("#sheet").hidden = false; $("#scrim").hidden = false;
   $("#sheetBody").scrollTop = 0;
   $("#sheetClose").textContent = sheetStack.length ? "←" : "✕";
+  if ($("#sheetBody").querySelector("[data-en]")) setTimeout(() => autoKo($("#sheetBody")), 0);
 }
 function closeSheet() {
   if (sheetStack.length) {
     const [t, h, cls] = sheetStack.pop();
     $("#sheetTitle").textContent = t; $("#sheetBody").innerHTML = h; $("#sheet").className = cls;
     $("#sheetClose").textContent = sheetStack.length ? "←" : "✕";
+    $("#sheetBody").querySelectorAll('[data-act="commko"][disabled]').forEach(x => { x.disabled = false; x.textContent = "한국어로 보기"; });
+    setTimeout(() => autoKo($("#sheetBody")), 0);
     return;
   }
   if (history.state && history.state.sheet) { history.back(); return; }
@@ -1962,7 +1966,7 @@ document.addEventListener("click", async e => {
     case "studyList": return showStudy(state.list.map(r => refKey(...r)));
     case "studyShare": return state.studyMd && shareFile(state.studyMd.md, state.studyMd.name);
     case "studyCopy": try { await navigator.clipboard.writeText(state.studyMd.md); toast("복사했습니다. 옵시디언에 붙여넣으세요."); } catch { toast("복사가 막혀 있습니다. 보내기를 써 주세요."); } return;
-    case "commko": return commToKo(t.closest(".comm"), t);
+    case "commko": return commToKo(t.closest("[data-en]"), t);
     case "commAutoKo": { const on = !store.get("commAutoKo", true); store.set("commAutoKo", on); t.setAttribute("aria-pressed", String(on)); t.textContent = on ? "자동 번역 켜짐" : "자동 번역 꺼짐"; if (on) autoKo(); return; }
     case "commmore": { const el = t.closest(".comm").querySelector(".comm-text"); el.classList.toggle("clip"); t.textContent = el.classList.contains("clip") ? "전체 보기" : "접기"; return; }
     case "export": return exportNotes();
