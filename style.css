@@ -292,3 +292,8 @@ a.btn{text-decoration:none;display:inline-block}
 .verrow select{padding:8px 6px;min-width:0}
 .vk-cmp{font-family:var(--f-ko);font-size:calc(var(--fs) * .92);line-height:1.7}
 @media (max-width:380px){.verrow{grid-template-columns:2.4em minmax(0,1fr) 2.4em minmax(0,1fr)}}
+
+.btn.sm{padding:6px 12px;font-size:.85rem}
+.tr-note{color:var(--muted);font-weight:400}
+.comm[data-lang="ko"] .comm-text{font-family:var(--f-ko);font-size:calc(var(--fs) * .8)}
+.tr-chip[aria-pressed="true"]{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}

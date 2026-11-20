@@ -330,6 +330,7 @@ async function drawList(scrollKey) {
   h += `</div>`;
   if (state.mode === "chapter") h += `<nav class="chap-nav"><button type="button" data-act="prev">‹ 이전 장</button><button type="button" data-act="next">다음 장 ›</button></nav>`;
   reader.innerHTML = h;
+  if (state.pad === "kateta") setTimeout(() => autoKo(reader), 0);
   // 전체 펼침 설정 적용
   if (state.allOrig || state.allEn) {
     for (const el of reader.querySelectorAll(".verse")) {
@@ -398,6 +399,7 @@ async function togglePanel(article, tool, key, forceOpen) {
     }
   } else if (tool === "comm") {
     div.innerHTML = await commPanelHTML(b, c, v);
+    setTimeout(() => autoKo(div), 0);
   } else if (tool === "lxx") {
     let lx = null;
     try { const L = await loadLxx(b); lx = L[c] && L[c][v]; } catch {}
@@ -991,21 +993,92 @@ function commFor(ch, v) {
   return null;
 }
 function commChips(sel, scope) {
+  const on = store.get("commAutoKo", true);
   return `<div class="chips comm-chips" role="group" aria-label="주석 선택">${COMMS.map(([id, ko]) =>
-    `<button class="chip" type="button" data-comm="${id}" data-scope="${scope}" aria-pressed="${id === sel}">${esc(ko)}</button>`).join("")}</div>`;
+    `<button class="chip" type="button" data-comm="${id}" data-scope="${scope}" aria-pressed="${id === sel}">${esc(ko)}</button>`).join("")}
+    <button class="chip tr-chip" type="button" data-act="commAutoKo" aria-pressed="${on}">${on ? "자동 번역 켜짐" : "자동 번역 꺼짐"}</button></div>`;
 }
 const gtrans = t => `https://translate.google.com/?sl=en&tl=ko&op=translate&text=${encodeURIComponent(t.slice(0, 4500))}`;
 function commBlock(name, ref, text, shared) {
   const long = text.length > 700;
-  return `<div class="comm"><p class="comm-src">${esc(name)} · ${esc(ref)}${shared ? " (앞 절과 묶인 주석)" : ""}</p>
+  return `<div class="comm" data-en="${esc(text)}"><p class="comm-src">${esc(name)} · ${esc(ref)}${shared ? " (앞 절과 묶인 주석)" : ""}</p>
     <div class="comm-text${long ? " clip" : ""}">${esc(text)}</div>
-    <div class="row">${long ? `<button class="linklike" type="button" data-act="commmore">전체 보기</button>` : ""}
-    <a class="linklike" href="${gtrans(text)}" target="_blank" rel="noopener">한국어로 번역 (구글)</a></div></div>`;
+    <div class="row"><button class="btn plain sm" type="button" data-act="commko">한국어로 보기</button>${long ? `<button class="linklike" type="button" data-act="commmore">전체 보기</button>` : ""}
+    <a class="linklike small" href="${gtrans(text)}" target="_blank" rel="noopener">구글 번역에서 열기</a></div></div>`;
+}
+
+// ---------- 주석 한국어 번역 ----------
+// 1) 크롬에 내장된 번역기(기기 안에서 번역, 일부 PC 크롬)가 있으면 그것을, 2) 없으면 구글 번역 무료 주소를 씁니다.
+// 한 번 번역한 글은 이 기기에 저장해 다시 번역하지 않습니다.
+const trMem = new Map();
+const hashT = t => { let h = 0; for (let i = 0; i < t.length; i++) h = (h * 31 + t.charCodeAt(i)) | 0; return "tr:" + h + ":" + t.length; };
+function chunks(t, n = 1400) {
+  const out = []; let cur = "";
+  for (const para of t.split(/(\n+)/)) {
+    if ((cur + para).length > n && cur) { out.push(cur); cur = ""; }
+    if (para.length > n) { for (const sen of para.split(/(?<=[.;:?!])\s+/)) { if ((cur + " " + sen).length > n && cur) { out.push(cur); cur = ""; } cur += (cur ? " " : "") + sen; } }
+    else cur += para;
+  }
+  if (cur.trim()) out.push(cur);
+  return out;
+}
+let builtinTr = null;
+const within = (p, ms) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error("timeout")), ms))]);
+async function trBuiltin(t) {
+  if (builtinTr === false || !("Translator" in self)) return null;
+  try {
+    if (!builtinTr) {
+      // 번역 모델이 이미 기기에 있을 때만 씁니다(내려받기를 기다리지 않음)
+      const av = await within(Translator.availability({ sourceLanguage: "en", targetLanguage: "ko" }), 3000);
+      if (av !== "available") { builtinTr = false; return null; }
+      builtinTr = await within(Translator.create({ sourceLanguage: "en", targetLanguage: "ko" }), 5000);
+    }
+    let out = ""; for (const c of chunks(t)) out += await within(builtinTr.translate(c), 20000);
+    return out;
+  } catch { builtinTr = false; return null; }
+}
+async function trGoogle(t) {
+  let out = "";
+  for (const c of chunks(t)) {
+    const r = await within(fetch("https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=ko&dt=t&q=" + encodeURIComponent(c)), 15000);
+    if (!r.ok) throw new Error("번역 서버 응답 " + r.status);
+    const j = await r.json();
+    out += (j[0] || []).map(x => x[0]).join("");
+  }
+  return out;
+}
+async function translateKo(t) {
+  const key = hashT(t);
+  if (trMem.has(key)) return trMem.get(key);
+  try { const saved = await idb.get("meta", key); if (saved) { trMem.set(key, saved); return saved; } } catch {}
+  const ko = (await trBuiltin(t)) || (await trGoogle(t));
+  trMem.set(key, ko);
+  try { await idb.put("meta", key, ko); } catch {}
+  return ko;
+}
+async function commToKo(box, btn) {
+  const el = box.querySelector(".comm-text"), en = box.dataset.en;
+  if (box.dataset.lang === "ko") { el.textContent = en; box.dataset.lang = "en"; if (btn) btn.textContent = "한국어로 보기"; return; }
+  if (btn) { btn.disabled = true; btn.textContent = "번역 중…"; }
+  try {
+    const ko = await translateKo(en);
+    el.textContent = ko; box.dataset.lang = "ko";
+    if (!box.querySelector(".tr-note")) box.querySelector(".comm-src").insertAdjacentHTML("beforeend", ` <span class="tr-note">· 기계 번역</span>`);
+    if (btn) btn.textContent = "영어 원문 보기";
+  } catch (e) {
+    if (btn) btn.textContent = "한국어로 보기";
+    toast("번역하지 못했습니다. 인터넷 연결을 확인하거나 '구글 번역에서 열기'를 눌러 주세요.");
+  } finally { if (btn) btn.disabled = false; }
+}
+// '자동 번역'을 켜 두면 화면에 나온 주석을 차례로 한국어로 바꿉니다
+async function autoKo(root) {
+  if (!store.get("commAutoKo", true)) return;
+  for (const box of (root || document).querySelectorAll(".comm:not([data-lang])")) await commToKo(box, box.querySelector('[data-act="commko"]'));
 }
 // 절 아래 패널
 async function commPanelHTML(b, c, v) {
   const id = curComm(), name = COMMS.find(x => x[0] === id)[1];
-  let h = `<h4>카테타 · 영어 주석</h4>${commChips(id, "panel")}`;
+  let h = `<h4>카테타 · 주석</h4>${commChips(id, "panel")}`;
   try {
     const ch = await loadComm(id, b, c);
     const hit = !ch.none && commFor(ch, v);
@@ -1301,7 +1374,11 @@ async function buildStudy(keys) {
     const [b, c, v] = fromKey(keys[0]);
     const ch = await loadComm(id, b, c);
     const hit = !ch.none && commFor(ch, v);
-    md += hit ? `- **${name}** (${BOOKS[b-1][1]} ${c}:${hit.from}) ${hit.text.replace(/\s+/g, " ").slice(0, 600)}${hit.text.length > 600 ? "…" : ""}\n` : `- ${name}: 이 본문 주석 없음\n`;
+    if (hit) {
+      const en = hit.text.replace(/\s+/g, " ").slice(0, 600) + (hit.text.length > 600 ? "…" : "");
+      let ko = ""; if (store.get("commAutoKo", true)) { try { ko = await translateKo(en); } catch {} }
+      md += `- **${name}** (${BOOKS[b-1][1]} ${c}:${hit.from}) ${ko ? ko + "\n  - (기계 번역 · 원문) " + en : en}\n`;
+    } else md += `- ${name}: 이 본문 주석 없음\n`;
   } catch { md += `- (인터넷 연결 시 주석이 들어갑니다)\n`; }
   md += `- 내 해석과 다른 점: \n`;
   // 노트
@@ -1883,6 +1960,8 @@ document.addEventListener("click", async e => {
     case "studyList": return showStudy(state.list.map(r => refKey(...r)));
     case "studyShare": return state.studyMd && shareFile(state.studyMd.md, state.studyMd.name);
     case "studyCopy": try { await navigator.clipboard.writeText(state.studyMd.md); toast("복사했습니다. 옵시디언에 붙여넣으세요."); } catch { toast("복사가 막혀 있습니다. 보내기를 써 주세요."); } return;
+    case "commko": return commToKo(t.closest(".comm"), t);
+    case "commAutoKo": { const on = !store.get("commAutoKo", true); store.set("commAutoKo", on); t.setAttribute("aria-pressed", String(on)); t.textContent = on ? "자동 번역 켜짐" : "자동 번역 꺼짐"; if (on) autoKo(); return; }
     case "commmore": { const el = t.closest(".comm").querySelector(".comm-text"); el.classList.toggle("clip"); t.textContent = el.classList.contains("clip") ? "전체 보기" : "접기"; return; }
     case "export": return exportNotes();
     case "copymd": return copyMarkdown();
