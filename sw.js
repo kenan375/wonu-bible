@@ -1,5 +1,5 @@
 // 원어서재 오프라인 저장소: 앱 화면은 미리 저장하고, 원어 데이터는 처음 받을 때 저장한다
-const VERSION = "v15";
+const VERSION = "v16";
 const SHELL = "wonu-shell-" + VERSION;
 const DATA = "wonu-data-v3"; // 데이터가 바뀌면 숫자를 올린다
 const SHELL_FILES = ["./", "index.html", "style.css", "app.js", "manifest.webmanifest",
@@ -37,7 +37,8 @@ self.addEventListener("fetch", e => {
     return;
   }
   // 앱 화면: 인터넷이 되면 새 버전, 안 되면 저장본
-  e.respondWith(fetch(e.request).then(r => {
+  // cache:"no-cache" — 브라우저가 들고 있는 옛 파일 대신 항상 서버에 새 버전이 있는지 확인
+  e.respondWith(fetch(e.request, { cache: "no-cache" }).then(r => {
     if (r.ok) { const copy = r.clone(); caches.open(SHELL).then(c => c.put(e.request, copy)); }
     return r;
   }).catch(() => caches.match(e.request, { ignoreSearch: true }).then(r => r || caches.match("index.html"))));
